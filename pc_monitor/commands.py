@@ -41,17 +41,7 @@ def build_event_message(event: str) -> str:
 
 
 def build_status_text() -> str:
-    now_str = datetime.now().strftime("%H:%M:%S ngay %d/%m/%Y")
-    host = system_info.get_hostname()
-    ip = system_info.get_local_ip()
-    uptime = system_info.get_uptime_str()
-    return (
-        f"🟢 <b>MAY TINH DANG BAT</b>\n"
-        f"Ten may: {config.COMPUTER_NAME} ({host})\n"
-        f"IP noi bo: {ip}\n"
-        f"Da bat lien tuc: {uptime}\n"
-        f"Thoi gian kiem tra: {now_str}"
-    )
+    return system_info.get_status_overview_text(config.COMPUTER_NAME)
 
 
 def build_help_text() -> str:
@@ -59,12 +49,12 @@ def build_help_text() -> str:
         "🤖 <b>Danh sach lenh ho tro:</b>",
         "",
         "<b>Trang thai</b>",
-        "/status hoac /ping - May co dang bat khong, uptime bao lau",
+        "/status hoac /ping - May dang bat, CPU/RAM, app dang dung, app dang mo",
+        "/apps hoac /windows - Danh sach day du ung dung / cua so dang mo",
         "/cpu - % su dung CPU",
         "/ram - % su dung RAM",
         "/disk - Dung luong cac o dia",
         "/procs - Top 5 tien trinh ngon CPU nhat",
-        "/apps - Danh sach ung dung dang mo (co giao dien)",
         "/ip - IP noi bo va IP cong khai",
     ]
     if config.ENABLE_SCREENSHOT:
@@ -219,6 +209,7 @@ COMMAND_TABLE = {
     "/disk": _cmd_disk,
     "/procs": _cmd_procs,
     "/apps": _cmd_apps,
+    "/windows": _cmd_apps,
     "/ip": _cmd_ip,
     "/screenshot": _cmd_screenshot,
     "/lock": _cmd_lock,

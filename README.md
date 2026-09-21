@@ -48,8 +48,8 @@ pc-monitor-pro/
 | Nhom | Tinh nang |
 |---|---|
 | Bao trang thai (tu dong) | Bao khi BAT may, khi SAP TAT/khoi dong lai, heartbeat dinh ky |
-| Hoi truc tiep | `/status`, `/ping` — hoi la tra loi ngay, im lang = may dang tat |
-| Giam sat | `/cpu`, `/ram`, `/disk`, `/procs`, `/ip` |
+| Hoi truc tiep | `/status`, `/ping` — hoi la tra loi ngay (CPU/RAM, app dang mo), im lang = may dang tat |
+| Giam sat | `/apps`, `/cpu`, `/ram`, `/disk`, `/procs`, `/ip` |
 | Dieu khien | `/screenshot`, `/lock`, `/shutdown_now`, `/restart_now` (co xac nhan) |
 | Tien ich | `/note` — gui ghi chu nhanh luu vao may |
 | Canh bao chu dong | Tu bao khi CPU/RAM vuot nguong dat trong `.env` |
@@ -229,12 +229,12 @@ Gui cac lenh nay cho bot cua ban tren Telegram:
 
 | Lenh | Chuc nang |
 |---|---|
-| `/status` hoac `/ping` | May co dang bat khong, uptime bao lau |
+| `/status` hoac `/ping` | May dang bat: CPU/RAM/o dia, man hinh khoa hay mo, app dang dung, danh sach app dang mo |
 | `/cpu` | % su dung CPU, toc do, so nhan/luong |
 | `/ram` | % su dung RAM, da dung / tong |
 | `/disk` | Dung luong tung o dia |
 | `/procs` | Top 5 tien trinh dang ngon CPU nhat |
-| `/apps` | Danh sach ung dung dang mo (co giao dien) |
+| `/apps` hoac `/windows` | Danh sach day du ung dung dang mo, cua so, va app dang duoc dung |
 | `/ip` | IP noi bo (LAN) va IP cong khai |
 | `/screenshot` | Chup va gui anh man hinh hien tai |
 | `/lock` | Khoa man hinh may ngay lap tuc |
@@ -292,7 +292,7 @@ ALLOWED_CHAT_IDS=987654321,111222333
 | `ModuleNotFoundError` | Chua `pip install -r requirements.txt` dung moi truong python dang dung de chay |
 | `/screenshot` bao loi tren Linux | Can co man hinh do hoa (X11/Wayland) dang chay, khong dung duoc tren server khong man hinh |
 | `/lock` khong hoat dong tren Linux | Desktop environment khong ho tro lenh khoa duoc thu (xem `actions.py`), thu cai `xdg-utils` |
-| `/apps` chi ra danh sach tien trinh he thong dai, khong phai ung dung | Thieu cong cu doc danh sach cua so: Linux can cai `wmctrl` (`sudo apt install wmctrl`); Windows/macOS thuong tu hoat dong duoc |
+| `/apps` chi ra danh sach tien trinh he thong dai, khong phai ung dung | Thieu cong cu / quyen doc danh sach cua so: Linux can cai `wmctrl`; macOS can cap quyen **Accessibility** cho Terminal/Python (System Settings -> Privacy & Security); Windows thuong tu hoat dong |
 | `/shutdown_now` bao "thieu quyen" tren Linux | Chay `install.sh` da dung systemd user, mot so distro can them polkit rule cho phep `shutdown` khong can mat khau — tim "polkit allow shutdown without password" |
 
 ## Gioi han & luu y bao mat
