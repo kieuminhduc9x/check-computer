@@ -1,0 +1,19 @@
+[Unit]
+Description=PC Monitor Pro - Lang nghe lenh Telegram (long polling)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PYTHON_BIN__ __PROJECT_DIR__/main.py listen
+Restart=on-failure
+RestartSec=10
+# TimeoutStopSec du de listener kip gui thong bao "shutdown" khi nhan SIGTERM
+# truoc khi systemd chuyen sang SIGKILL.
+TimeoutStopSec=15
+StandardOutput=append:__PROJECT_DIR__/pc_monitor_systemd.log
+StandardError=append:__PROJECT_DIR__/pc_monitor_systemd.log
+
+[Install]
+WantedBy=default.target

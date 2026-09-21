@@ -1,0 +1,14 @@
+[Unit]
+Description=PC Monitor Pro - Thong bao khi dang nhap
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PYTHON_BIN__ __PROJECT_DIR__/main.py startup
+StandardOutput=append:__PROJECT_DIR__/pc_monitor_systemd.log
+StandardError=append:__PROJECT_DIR__/pc_monitor_systemd.log
+
+[Install]
+WantedBy=default.target

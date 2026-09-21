@@ -1,0 +1,7 @@
+.env
+*.log
+.update_offset
+.last_screenshot.png
+notes.txt
+__pycache__/
+*.pyc

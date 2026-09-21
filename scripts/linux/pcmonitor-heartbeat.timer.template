@@ -1,0 +1,10 @@
+[Unit]
+Description=PC Monitor Pro - Bo dem thoi gian cho heartbeat
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=__HEARTBEAT_MINUTES__min
+Unit=pcmonitor-heartbeat.service
+
+[Install]
+WantedBy=timers.target

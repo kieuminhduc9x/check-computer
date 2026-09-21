@@ -1,0 +1,8 @@
+# Thu vien can thiet cho PC Monitor Pro
+# Cai bang: pip install -r requirements.txt
+
+python-dotenv>=1.0.0   # doc file .env
+psutil>=5.9.0           # thong tin CPU / RAM / dia / tien trinh (cross-platform)
+requests>=2.31.0        # goi Telegram API
+mss>=9.0.1               # chup man hinh (cross-platform: Windows/macOS/Linux)
+Pillow>=10.0.0           # xu ly/nen anh chup man hinh truoc khi gui
