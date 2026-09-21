@@ -157,6 +157,15 @@ chay `listen`). `/service` de xem da cai chua, `/autostart_off` de go.
 ## Cai dat rieng tren Windows
 
 Cach khuyen nghi: `python main.py install` (khong can Administrator).
+Lenh nay **start listener ngay**, roi moi lan dang nhap Windows se tu chay lai.
+
+Neu Telegram **khong phan hoi** tren Windows:
+1. Chay `python main.py test` — phai nhan tin thanh cong.
+2. Chay `python main.py listen` (de mo cua so nay), roi gui `/help`.
+3. Khong dung Python cai tu Microsoft Store. Cai tu https://python.org
+   va tick **"Add python.exe to PATH"**.
+4. Xem `pc_monitor.log` va `pc_monitor_task.log` trong thu muc project.
+5. Task Scheduler -> `PCMonitorPro_Listener` -> Last Run Result phai la `0x0`.
 
 Hoac chay script:
 
@@ -312,7 +321,8 @@ ALLOWED_CHAT_IDS=987654321,111222333
 | `LOI: khong tim thay file .env` | Chua `cp .env.example .env` |
 | `LOI CAU HINH: BOT_TOKEN chua duoc dien dung` | Con nguyen chu `DAN_...` trong `.env` |
 | `python main.py test` bao HTTPError 404 | Token sai, kiem tra lai tu BotFather |
-| Bot khong tra loi `/status` | Tien trinh `listen` chua chay — kiem tra Task Scheduler/launchctl/systemctl, hoac chay `python main.py install` |
+| Bot khong tra loi tren Windows | Listener chua chay, hoac Python Store stub. Chay `python main.py listen`, xem `pc_monitor_task.log`. Cai Python tu python.org (khong dung Microsoft Store) |
+| Bot khong tra loi `/status` | Tien trinh `listen` chua chay — `python main.py install` hoac `python main.py listen` |
 | `/autostart` bao loi tren Windows | Thu chay `python main.py install` trong Command Prompt; mot so may can dang nhap Windows bang dung tai khoan se dung may |
 | `ModuleNotFoundError` | Chua `pip install -r requirements.txt` dung moi truong python dang dung de chay |
 | `/screenshot` bao loi tren Linux | Can co man hinh do hoa (X11/Wayland) dang chay, khong dung duoc tren server khong man hinh |

@@ -28,6 +28,17 @@ def _url(method: str) -> str:
     return API_BASE.format(token=config.BOT_TOKEN, method=method)
 
 
+def send_chat_action(chat_id: str, action: str = "typing") -> None:
+    try:
+        requests.post(
+            _url("sendChatAction"),
+            data={"chat_id": chat_id, "action": action},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
 def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
     try:
         data = {"chat_id": chat_id, "text": text}

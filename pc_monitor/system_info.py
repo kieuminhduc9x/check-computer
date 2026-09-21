@@ -170,17 +170,13 @@ def _is_locked_windows() -> bool | None:
     import ctypes
 
     user32 = ctypes.windll.user32
-    desktop = user32.OpenInputDesktop(0, False, 0)
+    DESKTOP_READOBJECTS = 0x0001
+    desktop = user32.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
     if desktop:
         user32.CloseDesktop(desktop)
         return False
-    # OpenInputDesktop that fail thuong nghia man hinh dang khoa / session khac
-    hdesk = user32.OpenDesktopW("Default", 0, False, 0x0100)
-    if not hdesk:
-        return None
-    switched = user32.SwitchDesktop(hdesk)
-    user32.CloseDesktop(hdesk)
-    return not bool(switched)
+    # Khong SwitchDesktop: de gay treo / mat phien GUI khi chay tu Task Scheduler.
+    return None
 
 
 def _is_locked_macos() -> bool | None:
@@ -357,6 +353,16 @@ def _get_visible_apps_windows() -> list:
     user32 = ctypes.windll.user32
     GWL_EXSTYLE = -20
     WS_EX_TOOLWINDOW = 0x00000080
+    is_64 = ctypes.sizeof(ctypes.c_void_p) == 8
+    if is_64:
+        user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+
+        def _ex_style(hwnd):
+            return int(user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) or 0)
+    else:
+        def _ex_style(hwnd):
+            return int(user32.GetWindowLongW(hwnd, GWL_EXSTYLE) or 0)
 
     fg_app, fg_title = _get_foreground_windows()
     grouped = {}
@@ -364,31 +370,33 @@ def _get_visible_apps_windows() -> list:
     EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
     def _callback(hwnd, lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        if ex_style & WS_EX_TOOLWINDOW:
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value.strip()
-        if not title:
-            return True
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        app_name = title
         try:
-            app_name = psutil.Process(pid.value).name() or title
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            if _ex_style(hwnd) & WS_EX_TOOLWINDOW:
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value.strip()
+            if not title:
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            app_name = title
+            try:
+                app_name = psutil.Process(pid.value).name() or title
+            except Exception:
+                pass
+            entry = grouped.setdefault(app_name, {"name": app_name, "frontmost": False, "windows": []})
+            if title not in entry["windows"]:
+                entry["windows"].append(title)
+            if fg_app and app_name == fg_app:
+                entry["frontmost"] = True
         except Exception:
-            pass
-        entry = grouped.setdefault(app_name, {"name": app_name, "frontmost": False, "windows": []})
-        if title not in entry["windows"]:
-            entry["windows"].append(title)
-        if fg_app and app_name == fg_app:
-            entry["frontmost"] = True
+            return True
         return True
 
     user32.EnumWindows(EnumWindowsProc(_callback), 0)

@@ -61,3 +61,9 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         telegram_api.log("Da dung (Ctrl+C).")
+    except Exception as e:
+        try:
+            telegram_api.log(f"Crash: {e}")
+        except Exception:
+            print(f"Crash: {e}", flush=True)
+        raise

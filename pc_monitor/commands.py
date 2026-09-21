@@ -117,6 +117,7 @@ def telegram_menu_commands() -> list:
 # ------------------------------- Xu ly tung lenh ------------------------------
 
 def _cmd_status(chat_id: str, args: str) -> None:
+    telegram_api.send_chat_action(chat_id)
     telegram_api.send_message(chat_id, build_status_text())
 
 
@@ -125,6 +126,7 @@ def _cmd_help(chat_id: str, args: str) -> None:
 
 
 def _cmd_cpu(chat_id: str, args: str) -> None:
+    telegram_api.send_chat_action(chat_id)
     telegram_api.send_message(chat_id, system_info.get_cpu_text())
 
 
@@ -137,10 +139,12 @@ def _cmd_disk(chat_id: str, args: str) -> None:
 
 
 def _cmd_procs(chat_id: str, args: str) -> None:
+    telegram_api.send_chat_action(chat_id)
     telegram_api.send_message(chat_id, system_info.get_top_processes_text())
 
 
 def _cmd_apps(chat_id: str, args: str) -> None:
+    telegram_api.send_chat_action(chat_id)
     telegram_api.send_message(chat_id, system_info.get_running_apps_text())
 
 
@@ -157,6 +161,7 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
     if not config.ENABLE_SCREENSHOT:
         telegram_api.send_message(chat_id, "Tinh nang screenshot dang bi tat (ENABLE_SCREENSHOT=false trong .env).")
         return
+    telegram_api.send_chat_action(chat_id, "upload_photo")
     ok, result = actions.take_screenshot()
     if ok:
         telegram_api.send_photo(chat_id, result, caption="📸 Man hinh hien tai")
@@ -194,6 +199,7 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
     if arg in ("status", "info"):
         _cmd_service(chat_id, "")
         return
+    telegram_api.send_chat_action(chat_id)
     ok, msg = autostart.install(start_listener_now=False)
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
 

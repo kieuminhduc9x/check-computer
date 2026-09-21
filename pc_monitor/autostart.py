@@ -242,10 +242,16 @@ def _status_linux() -> str:
 
 # --------------------------------- Windows -----------------------------------
 
-def _win_pythonw() -> str:
-    exe = Path(_python_bin())
-    pythonw = exe.with_name("pythonw.exe")
-    return str(pythonw if pythonw.exists() else exe)
+def _win_python() -> str:
+    """Uu tien python.exe that, tranh stub WindowsApps (Task Scheduler hay im)."""
+    exe = Path(_python_bin()).resolve()
+    text = str(exe)
+    if "WindowsApps" in text:
+        finder = _run(["py", "-3", "-c", "import sys; print(sys.executable)"])
+        found = (finder.stdout or "").strip()
+        if finder.returncode == 0 and found and "WindowsApps" not in found:
+            return found
+    return str(exe)
 
 
 def _win_autostart_dir() -> Path:
@@ -256,13 +262,16 @@ def _win_autostart_dir() -> Path:
 
 def _win_write_cmd(name: str, action: str) -> Path:
     dest = _win_autostart_dir() / f"{name}.cmd"
-    python = _win_pythonw()
+    python = _win_python()
     main_py = _project_dir() / "main.py"
+    log_file = _project_dir() / "pc_monitor_task.log"
     dest.write_text(
         "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
         f'cd /d "{_project_dir()}"\r\n'
-        f'"{python}" "{main_py}" {action}\r\n',
-        encoding="utf-8",
+        "set PYTHONUNBUFFERED=1\r\n"
+        f'"{python}" -u "{main_py}" {action} >> "{log_file}" 2>&1\r\n',
+        encoding="utf-8-sig",
     )
     return dest
 
@@ -271,8 +280,34 @@ def _schtasks(args: list[str]) -> subprocess.CompletedProcess:
     return _run(["schtasks", *args])
 
 
+def _win_create_task(name: str, script: Path, extra: list[str]) -> subprocess.CompletedProcess:
+    tr = f'"{script}"'
+    create = [
+        "schtasks", "/Create", "/F",
+        "/TN", name,
+        "/TR", tr,
+        *extra,
+    ]
+    result = _run(create)
+    if result.returncode != 0 and "/DELAY" in extra:
+        stripped = [item for item in extra if item not in ("/DELAY", "0000:30")]
+        create = ["schtasks", "/Create", "/F", "/TN", name, "/TR", tr, *stripped]
+        result = _run(create)
+    return result
+
+
 def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
     minutes = max(1, int(config.HEARTBEAT_MINUTES))
+    python = _win_python()
+    if "WindowsApps" in python:
+        return (
+            False,
+            "Windows dang dung Python tu Microsoft Store (WindowsApps). "
+            "Task Scheduler khong chay duoc stub nay nen bot se im lang.\n"
+            "Hay cai Python tu https://python.org (tick Add python.exe to PATH), "
+            "roi chay lai: python main.py install",
+        )
+
     cmds = {
         "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
         "PCMonitorPro_Listener": _win_write_cmd("listen", "listen"),
@@ -285,17 +320,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
     ]
     lines = ["Da dang ky Task Scheduler (chay khi dang nhap):"]
     for name, extra in specs:
-        tr = str(cmds[name])
-        create = [
-            "schtasks", "/Create", "/F",
-            "/TN", name,
-            "/TR", tr,
-            *extra,
-        ]
-        result = _run(create)
-        if result.returncode != 0 and "/DELAY" in extra:
-            create = ["schtasks", "/Create", "/F", "/TN", name, "/TR", tr, extra[0], extra[1]]
-            result = _run(create)
+        result = _win_create_task(name, cmds[name], extra)
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()
             return False, f"schtasks {name} that bai: {err or result.returncode}"
@@ -303,6 +328,22 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         if name == "PCMonitorPro_Listener" and running_as_listener() and not start_listener_now:
             extra_note = " (giu listener hien tai)"
         lines.append(f"- {name}: OK{extra_note}")
+
+    if start_listener_now and not running_as_listener():
+        started = _schtasks(["/Run", "/TN", "PCMonitorPro_Listener"])
+        ping = _schtasks(["/Run", "/TN", "PCMonitorPro_Startup"])
+        if started.returncode == 0:
+            lines.append("- Da start listener ngay (khong can doi dang nhap lai)")
+        else:
+            err = (started.stderr or started.stdout or "").strip()
+            lines.append(
+                "- Chua start duoc listener ngay. Hay chay: python main.py listen\n"
+                f"  Chi tiet: {err or started.returncode}"
+            )
+        if ping.returncode == 0:
+            lines.append("- Da gui tin startup toi Telegram de kiem tra phan hoi")
+        lines.append("Neu van im lang: xem pc_monitor.log va pc_monitor_task.log")
+
     lines.append("Kiem tra: schtasks /Query /TN PCMonitorPro_Listener")
     return True, "\n".join(lines)
 

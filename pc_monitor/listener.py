@@ -157,7 +157,20 @@ def run() -> None:
             if not text:
                 continue
 
-            handled = commands.dispatch(chat_id, text)
+            try:
+                handled = commands.dispatch(chat_id, text)
+            except Exception as e:
+                telegram_api.log(f"Loi khi xu ly lenh tu {chat_id}: {text!r} -> {e}")
+                safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                cmd = text.split()[0].replace("<", "").replace(">", "")
+                telegram_api.send_message(
+                    chat_id,
+                    f"❌ Loi khi xu ly lenh <code>{cmd}</code>.\n"
+                    f"Chi tiet: {safe}\n"
+                    "Xem them file pc_monitor.log tren may.",
+                )
+                continue
+
             if not handled:
                 telegram_api.log(f"Lenh khong xac dinh tu {chat_id}: {text}")
                 if text.startswith("/"):
