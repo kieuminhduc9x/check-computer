@@ -44,35 +44,66 @@ def build_status_text() -> str:
     return system_info.get_status_overview_text(config.COMPUTER_NAME)
 
 
+def _disabled_suffix(enabled: bool) -> str:
+    return "" if enabled else "  — dang tat trong .env"
+
+
 def build_help_text() -> str:
     lines = [
-        "🤖 <b>Danh sach lenh ho tro:</b>",
+        "🤖 <b>Danh sach lenh</b>",
         "",
-        "<b>Trang thai</b>",
-        "/status hoac /ping - May dang bat, CPU/RAM, app dang dung, app dang mo",
-        "/apps hoac /windows - Danh sach day du ung dung / cua so dang mo",
-        "/cpu - % su dung CPU",
-        "/ram - % su dung RAM",
-        "/disk - Dung luong cac o dia",
-        "/procs - Top 5 tien trinh ngon CPU nhat",
-        "/ip - IP noi bo va IP cong khai",
+        "<b>Trang thai may</b>",
+        "/status — may dang bat, CPU/RAM, app dang dung, app dang mo",
+        "/ping — giong /status, dung de hoi may con online khong",
+        "",
+        "<b>Ung dung &amp; tai nguyen</b>",
+        "/apps — danh sach ung dung / cua so dang mo",
+        "/windows — giong /apps",
+        "/cpu — % CPU",
+        "/ram — % RAM",
+        "/disk — dung luong o dia",
+        "/procs — top 5 tien trinh ngon CPU",
+        "/ip — IP noi bo va IP cong khai",
+        "",
+        "<b>Dieu khien</b>",
+        f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
+        f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
+        f"/shutdown_now — tat may, can /confirm_shutdown{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        f"/restart_now — khoi dong lai, can /confirm_restart{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        "",
+        "<b>Khac</b>",
+        f"/note noi dung — luu ghi chu vao may{_disabled_suffix(config.ENABLE_NOTE)}",
+        "/help — xem lai danh sach nay",
+        "",
+        "Neu may da tat, moi lenh se khong co phan hoi.",
+    ]
+    return "\n".join(lines)
+
+
+def telegram_menu_commands() -> list:
+    """Danh sach dang ky vao nut '/' tren Telegram (toi da 100 lenh)."""
+    items = [
+        ("status", "Trang thai may, CPU/RAM, app dang mo"),
+        ("ping", "Kiem tra may con online"),
+        ("apps", "Ung dung / cua so dang mo"),
+        ("windows", "Giong /apps"),
+        ("cpu", "Phan tram CPU"),
+        ("ram", "Phan tram RAM"),
+        ("disk", "Dung luong o dia"),
+        ("procs", "Top tien trinh theo CPU"),
+        ("ip", "IP noi bo va cong khai"),
     ]
     if config.ENABLE_SCREENSHOT:
-        lines.append("/screenshot - Chup man hinh hien tai")
+        items.append(("screenshot", "Chup man hinh"))
     if config.ENABLE_LOCK:
-        lines.append("/lock - Khoa man hinh may")
+        items.append(("lock", "Khoa man hinh"))
     if config.ENABLE_SHUTDOWN_RESTART:
-        lines.append("/shutdown_now - Tat may (can xac nhan)")
-        lines.append("/restart_now - Khoi dong lai may (can xac nhan)")
+        items.append(("shutdown_now", "Tat may (can xac nhan)"))
+        items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
     if config.ENABLE_NOTE:
-        lines.append("/note <noi dung> - Luu 1 ghi chu nhanh vao may")
-    lines.append("/help - Xem lai danh sach nay")
-    lines.append("")
-    lines.append(
-        "Luu y: neu may da tat, ban se KHONG nhan duoc phan hoi cho bat ky lenh "
-        "nao ca — do la dau hieu may dang tat."
-    )
-    return "\n".join(lines)
+        items.append(("note", "Luu ghi chu vao may"))
+    items.append(("help", "Danh sach toan bo lenh"))
+    return [{"command": name, "description": desc} for name, desc in items]
 
 
 # ------------------------------- Xu ly tung lenh ------------------------------
@@ -138,7 +169,7 @@ def _cmd_note(chat_id: str, args: str) -> None:
         telegram_api.send_message(chat_id, "Tinh nang ghi chu dang bi tat (ENABLE_NOTE=false trong .env).")
         return
     if not args.strip():
-        telegram_api.send_message(chat_id, "Dung: /note <noi dung ghi chu>")
+        telegram_api.send_message(chat_id, "Dung: /note noi dung ghi chu")
         return
     ok, msg = actions.append_note(args.strip())
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)

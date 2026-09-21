@@ -103,6 +103,7 @@ def run() -> None:
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
+    telegram_api.set_my_commands(commands.telegram_menu_commands())
 
     # Bat tin hieu tat/khoi dong lai tren macOS & Linux (Windows dung
     # Event ID 1074 rieng, xem scripts/windows/). signal.SIGTERM khong ton
@@ -157,3 +158,8 @@ def run() -> None:
             handled = commands.dispatch(chat_id, text)
             if not handled:
                 telegram_api.log(f"Lenh khong xac dinh tu {chat_id}: {text}")
+                if text.startswith("/"):
+                    telegram_api.send_message(
+                        chat_id,
+                        "Khong hieu lenh nay.\n\n" + commands.build_help_text(),
+                    )

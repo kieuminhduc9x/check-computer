@@ -30,18 +30,47 @@ def _url(method: str) -> str:
 
 def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
     try:
-        resp = requests.post(
-            _url("sendMessage"),
-            data={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
-            timeout=15,
-        )
+        data = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+        resp = requests.post(_url("sendMessage"), data=data, timeout=15)
         result = resp.json()
         if result.get("ok"):
             return True
+        desc = str(result.get("description", "")).lower()
+        if parse_mode and "parse" in desc:
+            log(f"Tin nhan HTML bi loi, gui lai dang thuong: {result}")
+            resp = requests.post(
+                _url("sendMessage"),
+                data={"chat_id": chat_id, "text": text},
+                timeout=15,
+            )
+            result = resp.json()
+            if result.get("ok"):
+                return True
         log(f"Telegram tra ve loi khi gui tin nhan: {result}")
         return False
     except requests.RequestException as e:
         log(f"Loi mang khi gui tin nhan: {e}")
+        return False
+
+
+def set_my_commands(commands: list) -> bool:
+    """Dang ky danh sach lenh len menu '/' cua Telegram."""
+    try:
+        resp = requests.post(
+            _url("setMyCommands"),
+            json={"commands": commands},
+            timeout=15,
+        )
+        result = resp.json()
+        if result.get("ok"):
+            log(f"Da cap nhat menu Telegram ({len(commands)} lenh).")
+            return True
+        log(f"Khong cap nhat duoc menu Telegram: {result}")
+        return False
+    except requests.RequestException as e:
+        log(f"Loi mang khi cap nhat menu Telegram: {e}")
         return False
 
 
