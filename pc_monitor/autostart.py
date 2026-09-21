@@ -31,6 +31,10 @@ WIN_TASKS = (
     "PCMonitorPro_Listener",
     "PCMonitorPro_Heartbeat",
 )
+WIN_STARTUP_CMDS = (
+    "PCMonitorPro_Startup.cmd",
+    "PCMonitorPro_Listener.cmd",
+)
 
 
 def running_as_listener() -> bool:
@@ -296,6 +300,73 @@ def _win_create_task(name: str, script: Path, extra: list[str]) -> subprocess.Co
     return result
 
 
+def _win_err_text(result: subprocess.CompletedProcess) -> str:
+    return (result.stderr or result.stdout or "").strip()
+
+
+def _win_access_denied(err: str) -> bool:
+    low = err.lower()
+    return "access is denied" in low or "access denied" in low or "truy cap bi tu choi" in low
+
+
+def _win_denied_help() -> str:
+    return (
+        "Quyen Task Scheduler bi tu choi (Access is denied).\n"
+        "\n"
+        "Cach 1 — chay lai voi quyen Administrator:\n"
+        "1. Tim Command Prompt, chuot phai -> Run as administrator\n"
+        "2. cd toi thu muc project (noi co main.py)\n"
+        "3. python main.py install\n"
+        "\n"
+        "Cach 2 — khong can Admin: dung thu muc Startup "
+        "(bot se tu thu neu schtasks bi chan).\n"
+        "\n"
+        "Tam thoi van nhan lenh neu dang chay: python main.py listen"
+    )
+
+
+def _win_startup_dir() -> Path:
+    appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def _install_windows_startup_folder(cmds: dict[str, Path]) -> tuple[bool, str]:
+    dest_dir = _win_startup_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    mapping = [
+        ("PCMonitorPro_Startup.cmd", cmds["PCMonitorPro_Startup"]),
+        ("PCMonitorPro_Listener.cmd", cmds["PCMonitorPro_Listener"]),
+    ]
+    lines = [
+        "Da dang ky bang thu muc Startup (khong can Admin):",
+        f"Thu muc: {dest_dir}",
+    ]
+    for name, src in mapping:
+        dest = dest_dir / name
+        dest.write_text(
+            "@echo off\r\n"
+            f'call "{src}"\r\n',
+            encoding="utf-8-sig",
+        )
+        lines.append(f"- {name}: OK")
+    lines.append("Lan sau dang nhap Windows se tu chay bot.")
+    lines.append("Heartbeat dinh ky can Task Scheduler (quyen Admin) nen chua bat.")
+    return True, "\n".join(lines)
+
+
+def _uninstall_windows_startup_folder() -> list[str]:
+    dest_dir = _win_startup_dir()
+    notes = []
+    for name in WIN_STARTUP_CMDS:
+        path = dest_dir / name
+        if path.exists():
+            path.unlink()
+            notes.append(f"- Startup {name}: da xoa")
+        else:
+            notes.append(f"- Startup {name}: khong co")
+    return notes
+
+
 def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
     minutes = max(1, int(config.HEARTBEAT_MINUTES))
     python = _win_python()
@@ -322,7 +393,22 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
     for name, extra in specs:
         result = _win_create_task(name, cmds[name], extra)
         if result.returncode != 0:
-            err = (result.stderr or result.stdout or "").strip()
+            err = _win_err_text(result)
+            if _win_access_denied(err):
+                ok, fallback = _install_windows_startup_folder(cmds)
+                prefix = (
+                    f"schtasks {name} that bai: {err}\n"
+                    f"{_win_denied_help()}\n"
+                )
+                if ok:
+                    extra = ""
+                    if start_listener_now and not running_as_listener():
+                        extra = (
+                            "\n\nDe bot tra loi ngay (chua doi dang nhap lai):\n"
+                            "python main.py listen"
+                        )
+                    return True, prefix + "\n" + fallback + extra
+                return False, prefix + "\nKhong ghi duoc thu muc Startup: " + fallback
             return False, f"schtasks {name} that bai: {err or result.returncode}"
         extra_note = ""
         if name == "PCMonitorPro_Listener" and running_as_listener() and not start_listener_now:
@@ -353,6 +439,8 @@ def _uninstall_windows() -> tuple[bool, str]:
     for name in WIN_TASKS:
         _schtasks(["/Delete", "/F", "/TN", name])
         lines.append(f"- {name}: da xoa (neu co)")
+    lines.append("Thu muc Startup:")
+    lines.extend(_uninstall_windows_startup_folder())
     return True, "\n".join(lines)
 
 
@@ -370,6 +458,11 @@ def _status_windows() -> str:
             lines.append(f"- {name}: da dang ky ({running})")
         else:
             lines.append(f"- {name}: chua dang ky")
+    dest_dir = _win_startup_dir()
+    lines.append("Thu muc Startup:")
+    for name in WIN_STARTUP_CMDS:
+        path = dest_dir / name
+        lines.append(f"- {name}: {'co' if path.exists() else 'chua co'}")
     return "\n".join(lines)
 
 

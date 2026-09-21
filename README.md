@@ -323,7 +323,7 @@ ALLOWED_CHAT_IDS=987654321,111222333
 | `python main.py test` bao HTTPError 404 | Token sai, kiem tra lai tu BotFather |
 | Bot khong tra loi tren Windows | Listener chua chay, hoac Python Store stub. Chay `python main.py listen`, xem `pc_monitor_task.log`. Cai Python tu python.org (khong dung Microsoft Store) |
 | Bot khong tra loi `/status` | Tien trinh `listen` chua chay — `python main.py install` hoac `python main.py listen` |
-| `/autostart` bao loi tren Windows | Thu chay `python main.py install` trong Command Prompt; mot so may can dang nhap Windows bang dung tai khoan se dung may |
+| `/autostart` bao `Access is denied` tren Windows | Khong du quyen tao Task Scheduler. Chuot phai Command Prompt -> **Run as administrator**, `cd` toi project, chay `python main.py install`. Neu khong co Admin, bot se tu dang ky bang thu muc Startup |
 | `ModuleNotFoundError` | Chua `pip install -r requirements.txt` dung moi truong python dang dung de chay |
 | `/screenshot` bao loi tren Linux | Can co man hinh do hoa (X11/Wayland) dang chay, khong dung duoc tren server khong man hinh |
 | `/lock` khong hoat dong tren Linux | Desktop environment khong ho tro lenh khoa duoc thu (xem `actions.py`), thu cai `xdg-utils` |
