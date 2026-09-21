@@ -145,6 +145,23 @@ def run() -> None:
             offset = update["update_id"] + 1
             _save_offset(offset)
 
+            callback = update.get("callback_query")
+            if callback:
+                cq_id = str(callback.get("id", ""))
+                msg = callback.get("message") or {}
+                chat = msg.get("chat") or callback.get("from") or {}
+                chat_id = str(chat.get("id", ""))
+                data = str(callback.get("data") or "")
+                telegram_api.answer_callback_query(cq_id)
+                if chat_id not in config.ALLOWED_CHAT_IDS:
+                    telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
+                    continue
+                try:
+                    commands.handle_callback(chat_id, data)
+                except Exception as e:
+                    telegram_api.log(f"Loi callback {data}: {e}")
+                continue
+
             message = update.get("message") or {}
             chat = message.get("chat") or {}
             text = (message.get("text") or "").strip()

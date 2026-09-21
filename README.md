@@ -268,8 +268,8 @@ Gui cac lenh nay cho bot cua ban tren Telegram:
 | `/ip` | IP noi bo (LAN) va IP cong khai |
 | `/screenshot` | Chup va gui anh man hinh hien tai |
 | `/lock` | Khoa man hinh may ngay lap tuc |
-| `/shutdown_now` | Yeu cau tat may (phai `/confirm_shutdown` trong 30s de xac nhan) |
-| `/restart_now` | Yeu cau khoi dong lai (phai `/confirm_restart` trong 30s de xac nhan) |
+| `/shutdown_now` | Yeu cau tat may — nhan nut xac nhan hoac `/confirm_shutdown` trong 30s. Van chay khi man hinh dang khoa (force) |
+| `/restart_now` | Yeu cau khoi dong lai — nhan nut xac nhan hoac `/confirm_restart` trong 30s. Van chay khi man hinh dang khoa |
 | `/note noi dung` | Luu 1 dong ghi chu vao file `notes.txt` tren may |
 | `/autostart` | Dang ky bot tu chay khi khoi dong / dang nhap |
 | `/autostart_off` | Go bo service khoi dong |

@@ -70,8 +70,10 @@ def build_help_text() -> str:
         "<b>Dieu khien</b>",
         f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
-        f"/shutdown_now — tat may, can /confirm_shutdown{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
-        f"/restart_now — khoi dong lai, can /confirm_restart{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        f"/shutdown_now — tat may, can xac nhan (ca khi khoa man hinh){_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        f"/restart_now — khoi dong lai, can xac nhan{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        f"/confirm_shutdown — xac nhan tat may{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
+        f"/confirm_restart — xac nhan khoi dong lai{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         "",
         "<b>Khac</b>",
         f"/note noi dung — luu ghi chu vao may{_disabled_suffix(config.ENABLE_NOTE)}",
@@ -105,6 +107,8 @@ def telegram_menu_commands() -> list:
     if config.ENABLE_SHUTDOWN_RESTART:
         items.append(("shutdown_now", "Tat may (can xac nhan)"))
         items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
+        items.append(("confirm_shutdown", "Xac nhan tat may"))
+        items.append(("confirm_restart", "Xac nhan khoi dong lai"))
     if config.ENABLE_NOTE:
         items.append(("note", "Luu ghi chu vao may"))
     if config.ENABLE_AUTOSTART:
@@ -233,12 +237,27 @@ def _cmd_service(chat_id: str, args: str) -> None:
     telegram_api.send_message(chat_id, autostart.status_text())
 
 
-def _request_confirmation(chat_id: str, action: str, prompt: str) -> None:
+def _power_lock_line() -> str:
+    locked = system_info.is_screen_locked()
+    if locked is True:
+        return "Man hinh: <b>dang khoa</b> — van tat/restart duoc (force, khong cho app hoi)."
+    if locked is False:
+        return "Man hinh: dang mo."
+    return "Man hinh: khong xac dinh."
+
+
+def _request_confirmation(chat_id: str, action: str, prompt: str, confirm_data: str, confirm_label: str) -> None:
     _pending_confirmations[chat_id] = {
         "action": action,
         "expires_at": time.time() + CONFIRM_TIMEOUT_SECONDS,
     }
-    telegram_api.send_message(chat_id, prompt)
+    markup = {
+        "inline_keyboard": [[
+            {"text": confirm_label, "callback_data": confirm_data},
+            {"text": "Huy", "callback_data": "cancel_power"},
+        ]]
+    }
+    telegram_api.send_message(chat_id, prompt, reply_markup=markup)
 
 
 def _cmd_shutdown_now(chat_id: str, args: str) -> None:
@@ -248,7 +267,10 @@ def _cmd_shutdown_now(chat_id: str, args: str) -> None:
     _request_confirmation(
         chat_id, "shutdown",
         "⚠️ Ban co chac muon <b>TAT MAY NGAY BAY GIO</b>?\n"
-        f"Gui /confirm_shutdown trong vong {CONFIRM_TIMEOUT_SECONDS} giay de xac nhan.",
+        f"{_power_lock_line()}\n"
+        f"Nhan nut ben duoi, hoac gui /confirm_shutdown trong {CONFIRM_TIMEOUT_SECONDS} giay.",
+        "confirm_shutdown",
+        "Xac nhan TAT MAY",
     )
 
 
@@ -259,7 +281,10 @@ def _cmd_restart_now(chat_id: str, args: str) -> None:
     _request_confirmation(
         chat_id, "restart",
         "⚠️ Ban co chac muon <b>KHOI DONG LAI MAY NGAY BAY GIO</b>?\n"
-        f"Gui /confirm_restart trong vong {CONFIRM_TIMEOUT_SECONDS} giay de xac nhan.",
+        f"{_power_lock_line()}\n"
+        f"Nhan nut ben duoi, hoac gui /confirm_restart trong {CONFIRM_TIMEOUT_SECONDS} giay.",
+        "confirm_restart",
+        "Xac nhan RESTART",
     )
 
 
@@ -284,6 +309,21 @@ def _cmd_confirm_shutdown(chat_id: str, args: str) -> None:
 
 def _cmd_confirm_restart(chat_id: str, args: str) -> None:
     _confirm(chat_id, "restart", actions.restart_now)
+
+
+def handle_callback(chat_id: str, data: str) -> bool:
+    """Xu ly nut bam inline. Tra ve True neu la callback cua bot."""
+    if data == "confirm_shutdown":
+        _cmd_confirm_shutdown(chat_id, "")
+        return True
+    if data == "confirm_restart":
+        _cmd_confirm_restart(chat_id, "")
+        return True
+    if data == "cancel_power":
+        _pending_confirmations.pop(chat_id, None)
+        telegram_api.send_message(chat_id, "Da huy lenh tat/khoi dong lai.")
+        return True
+    return False
 
 
 # ------------------------------- Bang dieu phoi -------------------------------

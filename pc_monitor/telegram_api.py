@@ -3,6 +3,8 @@ telegram_api.py - Lop giao tiep voi Telegram Bot API.
 Dung thu vien `requests` cho don gian va de xu ly upload anh (multipart).
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -39,11 +41,13 @@ def send_chat_action(chat_id: str, action: str = "typing") -> None:
         pass
 
 
-def send_message(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
+def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
     try:
         data = {"chat_id": chat_id, "text": text}
         if parse_mode:
             data["parse_mode"] = parse_mode
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
         resp = requests.post(_url("sendMessage"), data=data, timeout=15)
         result = resp.json()
         if result.get("ok"):
@@ -110,13 +114,19 @@ def get_updates(offset: int, timeout: int) -> dict:
         data={
             "offset": offset,
             "timeout": timeout,
-            "allowed_updates": json.dumps(["message"]),
+            "allowed_updates": json.dumps(["message", "callback_query"]),
         },
         timeout=timeout + 10,
     )
     return resp.json()
 
 
-def get_me() -> dict:
-    resp = requests.get(_url("getMe"), timeout=15)
-    return resp.json()
+def answer_callback_query(callback_id: str, text: str = "") -> None:
+    try:
+        requests.post(
+            _url("answerCallbackQuery"),
+            data={"callback_query_id": callback_id, "text": text},
+            timeout=10,
+        )
+    except Exception:
+        pass
