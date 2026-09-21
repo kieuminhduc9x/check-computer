@@ -623,10 +623,47 @@ def uninstall() -> tuple[bool, str]:
         return False, f"Loi khi go service: {e}"
 
 
+def _is_autostart_registered() -> tuple[bool, str]:
+    """Listener co duoc dang ky chay luc dang nhap khong."""
+    system = _os()
+    if system == "Windows":
+        task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"])
+        startup = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
+        if task.returncode == 0:
+            return True, "Task Scheduler: PCMonitorPro_Listener"
+        if startup.exists():
+            return True, "Thu muc Startup (khong dung Task Scheduler)"
+        return False, "Chua co task Listener va chua co file Startup"
+    if system == "Darwin":
+        dest = _macos_plist_path("listener")
+        if dest.exists():
+            return True, "launchd: com.pcmonitor.listener"
+        return False, "Chua co LaunchAgent listener"
+    if system == "Linux":
+        result = _systemctl(["is-enabled", "pcmonitor-listener.service"])
+        enabled = (result.stdout or "").strip()
+        if enabled in ("enabled", "enabled-runtime", "static"):
+            return True, f"systemd: pcmonitor-listener.service ({enabled})"
+        return False, f"systemd listener: {enabled or 'chua dang ky'}"
+    return False, f"He dieu hanh {system} chua ho tro"
+
+
 def status_text() -> str:
     system = _os()
+    try:
+        ok, detail = _is_autostart_registered()
+    except Exception as e:
+        ok, detail = False, str(e)
+    if ok:
+        verdict = f"✅ <b>DA DANG KY AUTOSTART</b>\n{detail}"
+    else:
+        verdict = (
+            f"❌ <b>CHUA DANG KY AUTOSTART</b>\n{detail}\n"
+            "Chay: python main.py install  hoac gui /autostart"
+        )
     header = (
         f"⚙️ <b>SERVICE KHOI DONG</b>\n"
+        f"{verdict}\n"
         f"May: {config.COMPUTER_NAME}\n"
         f"He dieu hanh: {system}\n"
         f"Python: {_python_bin()}\n"
