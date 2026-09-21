@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=__PROJECT_DIR__
 ExecStart="__PYTHON_BIN__" "__PROJECT_DIR__/main.py" listen
-Restart=on-failure
+Restart=always
 RestartSec=10
 # TimeoutStopSec du de listener kip gui thong bao "shutdown" khi nhan SIGTERM
 # truoc khi systemd chuyen sang SIGKILL.

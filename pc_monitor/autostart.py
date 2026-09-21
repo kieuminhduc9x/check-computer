@@ -34,6 +34,7 @@ WIN_TASKS = (
 )
 WIN_STARTUP_CMDS = (
     "PCMonitorPro_Startup.cmd",
+    "PCMonitorPro_Listener.vbs",
     "PCMonitorPro_Listener.cmd",
 )
 
@@ -98,28 +99,49 @@ def _macos_launchctl(args: list[str]) -> subprocess.CompletedProcess:
     return _run(["launchctl", *args])
 
 
+def _macos_uid_domain() -> tuple[int, str]:
+    uid = os.getuid()
+    return uid, f"gui/{uid}"
+
+
+def _macos_enable(name: str) -> None:
+    _, domain = _macos_uid_domain()
+    _macos_launchctl(["enable", f"{domain}/com.pcmonitor.{name}"])
+
+
 def _install_macos(*, start_listener_now: bool) -> tuple[bool, str]:
     mapping = _mapping()
     templates = _project_dir() / "scripts" / "macos"
-    lines = ["Da dang ky launchd (chay khi dang nhap):"]
+    lines = ["Da dang ky launchd (chay khi dang nhap, khong can go listen):"]
+    _, domain = _macos_uid_domain()
     for name in MAC_LABELS:
         template = templates / f"com.pcmonitor.{name}.plist.template"
         dest = _macos_plist_path(name)
         if not template.exists():
             return False, f"Thieu template: {template}"
         _fill_template(template, dest, mapping)
+        _macos_enable(name)
 
         skip_reload = running_as_listener() and not start_listener_now and name in ("listener", "startup")
         if skip_reload:
-            lines.append(f"- com.pcmonitor.{name}: da ghi file, giu process hien tai")
+            lines.append(f"- com.pcmonitor.{name}: da ghi + enable, lan sau dang nhap se tu chay")
             continue
 
+        _macos_launchctl(["bootout", domain, str(dest)])
         _macos_launchctl(["unload", str(dest)])
-        loaded = _macos_launchctl(["load", "-w", str(dest)])
+        loaded = _macos_launchctl(["bootstrap", domain, str(dest)])
+        if loaded.returncode != 0:
+            loaded = _macos_launchctl(["load", "-w", str(dest)])
         if loaded.returncode != 0:
             err = (loaded.stderr or loaded.stdout or "").strip()
-            return False, f"launchctl load {name} that bai: {err or loaded.returncode}"
+            # "already bootstrapped" van OK
+            if "already" not in (err or "").lower():
+                return False, f"launchctl {name} that bai: {err or loaded.returncode}"
+        _macos_enable(name)
+        if name == "listener" and start_listener_now:
+            _macos_launchctl(["kickstart", "-k", f"{domain}/com.pcmonitor.listener"])
         lines.append(f"- com.pcmonitor.{name}: OK")
+    lines.append("Lan sau CHI CAN DANG NHAP — khong can chay python main.py listen.")
     lines.append("Kiem tra: launchctl list | grep pcmonitor")
     return True, "\n".join(lines)
 
@@ -202,6 +224,7 @@ def _install_linux(*, start_listener_now: bool) -> tuple[bool, str]:
             return False, f"systemctl {' '.join(cmd)} that bai: {err or result.returncode}"
         extra = " (enable, khong start lai process dang chay)" if from_listener and unit.endswith("listener.service") else ""
         lines.append(f"- {unit}: OK{extra}")
+    lines.append("Lan sau CHI CAN DANG NHAP — khong can chay python main.py listen.")
     lines.append("Kiem tra: systemctl --user status pcmonitor-listener.service")
     lines.append("Neu can chay ca khi chua dang nhap: sudo loginctl enable-linger $USER")
     return True, "\n".join(lines)
@@ -263,6 +286,28 @@ def _win_autostart_dir() -> Path:
     path = _project_dir() / ".autostart"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _win_pythonw() -> str:
+    exe = Path(_win_python())
+    pythonw = exe.with_name("pythonw.exe")
+    return str(pythonw if pythonw.exists() else exe)
+
+
+def _win_write_listen_vbs() -> Path:
+    """Chay listener an, khong mo cua so CMD (tranh bi tat nham luc dang nhap)."""
+    dest = _win_autostart_dir() / "listen.vbs"
+    pythonw = _win_pythonw()
+    main_py = _project_dir() / "main.py"
+    project = _project_dir()
+    dest.write_text(
+        "On Error Resume Next\r\n"
+        "Set sh = CreateObject(\"WScript.Shell\")\r\n"
+        f"sh.CurrentDirectory = \"{project}\"\r\n"
+        f"sh.Run \"\"\"{pythonw}\"\" -u \"\"{main_py}\"\" listen\", 0, False\r\n",
+        encoding="utf-8-sig",
+    )
+    return dest
 
 
 def _win_write_cmd(name: str, action: str) -> Path:
@@ -420,24 +465,27 @@ def _win_startup_dir() -> Path:
 def _install_windows_startup_folder(cmds: dict[str, Path]) -> tuple[bool, str]:
     dest_dir = _win_startup_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
+    listen_vbs = _win_write_listen_vbs()
     mapping = [
         ("PCMonitorPro_Startup.cmd", cmds["PCMonitorPro_Startup"]),
-        ("PCMonitorPro_Listener.cmd", cmds["PCMonitorPro_Listener"]),
+        ("PCMonitorPro_Listener.vbs", listen_vbs),
     ]
     lines = [
-        "Da dang ky bang thu muc Startup (khong can Admin):",
+        "Da dang ky thu muc Startup (an, khong mo CMD):",
         f"Thu muc: {dest_dir}",
     ]
     for name, src in mapping:
         dest = dest_dir / name
-        dest.write_text(
-            "@echo off\r\n"
-            f'call "{src}"\r\n',
-            encoding="utf-8-sig",
-        )
+        if name.endswith(".vbs"):
+            dest.write_text(src.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+        else:
+            dest.write_text(
+                "@echo off\r\n"
+                f'call "{src}"\r\n',
+                encoding="utf-8-sig",
+            )
         lines.append(f"- {name}: OK")
-    lines.append("Lan sau dang nhap Windows se tu chay bot.")
-    lines.append("Heartbeat dinh ky can Task Scheduler (quyen Admin) nen chua bat.")
+    lines.append("Lan sau CHI CAN DANG NHAP Windows — khong can chay python main.py listen.")
     return True, "\n".join(lines)
 
 
@@ -462,7 +510,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         if msg == "UAC_CANCELED":
             cmds = {
                 "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
-                "PCMonitorPro_Listener": _win_write_cmd("listen", "listen"),
+                "PCMonitorPro_Listener": _win_write_listen_vbs(),
             }
             fallback_ok, fallback = _install_windows_startup_folder(cmds)
             return fallback_ok, (
@@ -486,7 +534,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
 
     cmds = {
         "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
-        "PCMonitorPro_Listener": _win_write_cmd("listen", "listen"),
+        "PCMonitorPro_Listener": _win_write_listen_vbs(),
         "PCMonitorPro_Heartbeat": _win_write_cmd("heartbeat", "heartbeat"),
     }
     specs = [
@@ -520,6 +568,9 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         if name == "PCMonitorPro_Listener" and running_as_listener() and not start_listener_now:
             extra_note = " (giu listener hien tai)"
         lines.append(f"- {name}: OK{extra_note}")
+
+    _, startup_msg = _install_windows_startup_folder(cmds)
+    lines.append(startup_msg)
 
     if start_listener_now and not running_as_listener():
         started = _schtasks(["/Run", "/TN", "PCMonitorPro_Listener"])
@@ -628,11 +679,12 @@ def _is_autostart_registered() -> tuple[bool, str]:
     system = _os()
     if system == "Windows":
         task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"])
-        startup = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
+        startup = _win_startup_dir() / "PCMonitorPro_Listener.vbs"
+        startup_cmd = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
         if task.returncode == 0:
             return True, "Task Scheduler: PCMonitorPro_Listener"
-        if startup.exists():
-            return True, "Thu muc Startup (khong dung Task Scheduler)"
+        if startup.exists() or startup_cmd.exists():
+            return True, "Thu muc Startup (chay an luc dang nhap)"
         return False, "Chua co task Listener va chua co file Startup"
     if system == "Darwin":
         dest = _macos_plist_path("listener")

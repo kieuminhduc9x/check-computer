@@ -15,14 +15,14 @@
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>EnvironmentVariables</key>
     <dict>
-        <key>SuccessfulExit</key>
-        <false/>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
-    <!-- SuccessfulExit=false: neu process tu thoat vi nhan SIGTERM luc tat
-         may (exit code 0), launchd se KHONG co gang khoi dong lai ngay luc
-         may dang tat. Neu crash that su (exit code khac 0), launchd se tu
-         khoi dong lai. -->
     <key>ProcessType</key>
     <string>Background</string>
     <key>StandardOutPath</key>
