@@ -8,7 +8,7 @@ Cach dung:
     python main.py heartbeat    -> bao may VAN DANG BAT (dinh ky)
     python main.py test         -> gui tin nhan thu de kiem tra cau hinh
     python main.py listen       -> chay nen lien tuc, lang nghe lenh Telegram
-    python main.py install      -> dang ky service tu chay khi khoi dong / dang nhap
+    python main.py install      -> dang ky service (Windows tu hoi quyen Admin / UAC)
     python main.py uninstall    -> go bo service tu khoi dong
     python main.py service      -> xem service da dang ky chua
 

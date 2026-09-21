@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import platform
 import subprocess
 from pathlib import Path
@@ -304,6 +305,101 @@ def _win_err_text(result: subprocess.CompletedProcess) -> str:
     return (result.stderr or result.stdout or "").strip()
 
 
+def _win_is_admin() -> bool:
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _win_result_path() -> Path:
+    return _win_autostart_dir() / "last_cli_result.txt"
+
+
+def _win_save_cli_result(ok: bool, msg: str) -> None:
+    if _os() != "Windows":
+        return
+    _win_result_path().write_text(("OK\n" if ok else "FAIL\n") + msg, encoding="utf-8")
+
+
+def _win_load_cli_result() -> tuple[bool, str] | None:
+    path = _win_result_path()
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8")
+    first, _, rest = text.partition("\n")
+    return first.strip() == "OK", rest.strip() or text.strip()
+
+
+def _win_run_as_admin(action_args: list[str]) -> tuple[int, str]:
+    """Chay lai main.py bang UAC (Run as administrator) va cho xong."""
+    python = _win_python()
+    main_py = str(_project_dir() / "main.py")
+    args = [main_py, *action_args]
+    ps_args = ", ".join(json.dumps(a) for a in args)
+    ps = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "try {\n"
+        f"  $p = Start-Process -FilePath {json.dumps(python)} "
+        f"-ArgumentList @({ps_args}) "
+        f"-WorkingDirectory {json.dumps(str(_project_dir()))} "
+        "-Verb RunAs -Wait -PassThru -WindowStyle Hidden\n"
+        "  if ($null -eq $p) { exit 1223 }\n"
+        "  exit $p.ExitCode\n"
+        "} catch {\n"
+        "  $m = $_.Exception.Message\n"
+        "  if ($m -match 'cancel') { exit 1223 }\n"
+        "  [Console]::Error.WriteLine($m)\n"
+        "  exit 1\n"
+        "}\n"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    err = (result.stderr or result.stdout or "").strip()
+    return result.returncode, err
+
+
+def _win_elevate_action(action: str, extra_args: list[str] | None = None) -> tuple[bool, str]:
+    extra_args = extra_args or []
+    try:
+        _win_result_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        code, err = _win_run_as_admin([action, "--elevated", *extra_args])
+    except subprocess.TimeoutExpired:
+        return (
+            False,
+            "Het thoi gian cho hop thoai Administrator (UAC).\n"
+            "Hay chay lai: python main.py install\n"
+            "Khi Windows hoi quyen, bam Yes.",
+        )
+    loaded = _win_load_cli_result()
+    canceled = code == 1223 or "cancel" in (err or "").lower()
+    if canceled:
+        return False, "UAC_CANCELED"
+    if loaded:
+        return loaded
+    if code == 0:
+        return True, f"Da chay {action} voi quyen Administrator."
+    return (
+        False,
+        err or f"Khong chay duoc voi quyen Administrator (exit {code}).",
+    )
+
+
+def _win_maybe_elevate(action: str, extra_args: list[str] | None = None) -> tuple[bool, str] | None:
+    """None = dang la admin, cu tiep tuc. Nguoc lai = ket qua sau khi elevate."""
+    if "--elevated" in sys.argv or _win_is_admin():
+        return None
+    return _win_elevate_action(action, extra_args)
+
+
 def _win_access_denied(err: str) -> bool:
     low = err.lower()
     return "access is denied" in low or "access denied" in low or "truy cap bi tu choi" in low
@@ -311,17 +407,9 @@ def _win_access_denied(err: str) -> bool:
 
 def _win_denied_help() -> str:
     return (
-        "Quyen Task Scheduler bi tu choi (Access is denied).\n"
-        "\n"
-        "Cach 1 — chay lai voi quyen Administrator:\n"
-        "1. Tim Command Prompt, chuot phai -> Run as administrator\n"
-        "2. cd toi thu muc project (noi co main.py)\n"
-        "3. python main.py install\n"
-        "\n"
-        "Cach 2 — khong can Admin: dung thu muc Startup "
-        "(bot se tu thu neu schtasks bi chan).\n"
-        "\n"
-        "Tam thoi van nhan lenh neu dang chay: python main.py listen"
+        "Can quyen Administrator de tao Task Scheduler.\n"
+        "Chay dung 1 lenh (Windows se hoi UAC, bam Yes):\n"
+        "python main.py install"
     )
 
 
@@ -368,6 +456,24 @@ def _uninstall_windows_startup_folder() -> list[str]:
 
 
 def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
+    extra = [] if start_listener_now else ["--keep-listener"]
+    elevated = _win_maybe_elevate("install", extra)
+    if elevated is not None:
+        ok, msg = elevated
+        if msg == "UAC_CANCELED":
+            cmds = {
+                "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
+                "PCMonitorPro_Listener": _win_write_cmd("listen", "listen"),
+            }
+            fallback_ok, fallback = _install_windows_startup_folder(cmds)
+            return fallback_ok, (
+                "Ban da huy hop thoai Administrator (UAC).\n"
+                "Chay lai 1 lenh roi bam Yes de dang ky Task Scheduler:\n"
+                "python main.py install\n\n"
+                + fallback
+            )
+        return ok, msg
+
     minutes = max(1, int(config.HEARTBEAT_MINUTES))
     python = _win_python()
     if "WindowsApps" in python:
@@ -395,6 +501,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         if result.returncode != 0:
             err = _win_err_text(result)
             if _win_access_denied(err):
+                # Da chay voi Admin ma van bi chan (policy). Fallback Startup.
                 ok, fallback = _install_windows_startup_folder(cmds)
                 prefix = (
                     f"schtasks {name} that bai: {err}\n"
@@ -435,6 +542,20 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
 
 
 def _uninstall_windows() -> tuple[bool, str]:
+    elevated = _win_maybe_elevate("uninstall")
+    if elevated is not None:
+        ok, msg = elevated
+        if msg == "UAC_CANCELED":
+            notes = _uninstall_windows_startup_folder()
+            return True, (
+                "Ban da huy hop thoai Administrator (UAC), "
+                "nen chi go duoc thu muc Startup.\n"
+                "Chay lai: python main.py uninstall  roi bam Yes "
+                "de xoa Task Scheduler.\n"
+                + "\n".join(notes)
+            )
+        return ok, msg
+
     lines = ["Da go Task Scheduler:"]
     for name in WIN_TASKS:
         _schtasks(["/Delete", "/F", "/TN", name])
@@ -528,7 +649,8 @@ def status_text() -> str:
 def run_cli(action: str) -> None:
     if action == "install":
         config.validate()
-        ok, msg = install(start_listener_now=True)
+        keep_listener = "--keep-listener" in sys.argv
+        ok, msg = install(start_listener_now=not keep_listener)
     elif action == "uninstall":
         ok, msg = uninstall()
     elif action in ("service", "autostart_status"):
@@ -537,5 +659,6 @@ def run_cli(action: str) -> None:
     else:
         print(f"Lenh service khong hop le: {action}")
         sys.exit(1)
+    _win_save_cli_result(ok, msg)
     print(msg)
     sys.exit(0 if ok else 1)

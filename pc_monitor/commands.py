@@ -7,6 +7,7 @@ Lenh nguy hiem (tat may / khoi dong lai) can xac nhan 2 buoc trong vong 30s.
 
 import time
 from datetime import datetime
+import platform
 
 from . import config
 from . import system_info
@@ -200,6 +201,13 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
         _cmd_service(chat_id, "")
         return
     telegram_api.send_chat_action(chat_id)
+    if platform.system() == "Windows":
+        telegram_api.send_message(
+            chat_id,
+            "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
+            "Hay bam <b>Yes</b> de dang ky Task Scheduler bang lenh "
+            "<code>python main.py install</code>.",
+        )
     ok, msg = autostart.install(start_listener_now=False)
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
 
@@ -208,6 +216,12 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
     if not config.ENABLE_AUTOSTART:
         telegram_api.send_message(chat_id, "Tinh nang dang ky service dang bi tat (ENABLE_AUTOSTART=false trong .env).")
         return
+    if platform.system() == "Windows":
+        telegram_api.send_message(
+            chat_id,
+            "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
+            "Hay bam <b>Yes</b> de go Task Scheduler.",
+        )
     ok, msg = autostart.uninstall()
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
 
