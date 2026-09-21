@@ -2,6 +2,7 @@
 *.log
 .update_offset
 .last_screenshot.png
+.last_ready_notify
 notes.txt
 __pycache__/
 *.pyc

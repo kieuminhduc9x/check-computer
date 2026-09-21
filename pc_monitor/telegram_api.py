@@ -6,6 +6,7 @@ Dung thu vien `requests` cho don gian va de xu ly upload anh (multipart).
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -68,6 +69,44 @@ def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup
     except requests.RequestException as e:
         log(f"Loi mang khi gui tin nhan: {e}")
         return False
+
+
+def send_to_all(text: str, parse_mode: str = "HTML") -> bool:
+    if not config.ALLOWED_CHAT_IDS:
+        return False
+    ok_all = True
+    for chat_id in config.ALLOWED_CHAT_IDS:
+        ok_all = send_message(chat_id, text, parse_mode=parse_mode) and ok_all
+    return ok_all
+
+
+def send_to_all_retry(text: str, attempts: int = 12, delay_sec: float = 10) -> bool:
+    """Gui lai khi may moi boot, mang/Telegram chua san sang."""
+    for i in range(1, attempts + 1):
+        if send_to_all(text):
+            if i > 1:
+                log(f"Gui thong bao thanh cong o lan thu {i}.")
+            return True
+        log(f"Chua gui duoc thong bao (lan {i}/{attempts}), thu lai sau {delay_sec}s")
+        time.sleep(delay_sec)
+    return False
+
+
+def boot_notify_recently_sent(window_sec: int = 120) -> bool:
+    if not config.READY_STAMP_FILE.exists():
+        return False
+    try:
+        ts = float(config.READY_STAMP_FILE.read_text(encoding="utf-8").strip())
+        return (time.time() - ts) < window_sec
+    except Exception:
+        return False
+
+
+def mark_boot_notified() -> None:
+    try:
+        config.READY_STAMP_FILE.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def set_my_commands(commands: list) -> bool:

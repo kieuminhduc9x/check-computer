@@ -29,16 +29,22 @@ def build_event_message(event: str) -> str:
 
     titles = {
         "startup": "🟢 MAY TINH DA BAT",
+        "ready": "🟢 MAY TINH DA BAT — SERVICE DA SAN SANG",
         "shutdown": "🔴 MAY TINH SAP TAT / KHOI DONG LAI",
         "heartbeat": "💚 MAY TINH VAN DANG HOAT DONG",
     }
     title = titles.get(event, "ℹ️ THONG BAO TU MAY TINH")
+    extra = ""
+    if event in ("startup", "ready"):
+        extra = f"\nDa bat lien tuc: {system_info.get_uptime_str()}"
+    if event == "ready":
+        extra += "\nListener Telegram dang chay — gui /status de kiem tra."
 
     return (
         f"<b>{title}</b>\n"
         f"Ten may: {config.COMPUTER_NAME} ({host})\n"
         f"IP noi bo: {ip}\n"
-        f"Thoi gian: {now_str}"
+        f"Thoi gian: {now_str}{extra}"
     )
 
 

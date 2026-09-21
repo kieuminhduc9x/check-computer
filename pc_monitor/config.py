@@ -69,6 +69,7 @@ NOTE_FILE = PROJECT_ROOT / os.getenv("NOTE_FILE", "notes.txt")
 LOG_FILE = PROJECT_ROOT / "pc_monitor.log"
 OFFSET_FILE = PROJECT_ROOT / ".update_offset"
 SCREENSHOT_TMP = PROJECT_ROOT / ".last_screenshot.png"
+READY_STAMP_FILE = PROJECT_ROOT / ".last_ready_notify"
 
 
 def validate(exit_on_error: bool = True) -> list:

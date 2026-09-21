@@ -28,14 +28,15 @@ def run_one_shot(event: str) -> None:
     config.validate()
     if event == "test":
         text = "✅ Ket noi Telegram bot thanh cong! PC Monitor Pro san sang su dung."
+        attempts = 3
     else:
         text = commands.build_event_message(event)
+        attempts = 12 if event in ("startup", "shutdown", "heartbeat") else 3
 
-    ok_all = True
-    for chat_id in config.ALLOWED_CHAT_IDS:
-        ok = telegram_api.send_message(chat_id, text)
-        ok_all = ok_all and ok
-    sys.exit(0 if ok_all else 1)
+    ok = telegram_api.send_to_all_retry(text, attempts=attempts, delay_sec=8)
+    if ok and event == "startup":
+        telegram_api.mark_boot_notified()
+    sys.exit(0 if ok else 1)
 
 
 def main() -> None:

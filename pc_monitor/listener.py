@@ -99,6 +99,20 @@ def _alert_watcher_loop() -> None:
         time.sleep(config.ALERT_CHECK_INTERVAL_SECONDS)
 
 
+def _notify_service_ready() -> None:
+    """Bao Telegram khi listener start — retry neu may moi boot, mang chua len.
+    Bo qua neu task startup vua gui tin trong 2 phut (tranh 2 tin trung)."""
+    if telegram_api.boot_notify_recently_sent(120):
+        telegram_api.log("Bo qua thong bao ready: startup vua gui roi.")
+        return
+    text = commands.build_event_message("ready")
+    if telegram_api.send_to_all_retry(text, attempts=12, delay_sec=10):
+        telegram_api.mark_boot_notified()
+        telegram_api.log("Da gui thong bao: may da bat, service san sang.")
+    else:
+        telegram_api.log("Khong gui duoc thong bao ready sau nhieu lan thu.")
+
+
 def run() -> None:
     config.validate()
     autostart.mark_listener_role()
@@ -106,6 +120,9 @@ def run() -> None:
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
     telegram_api.set_my_commands(commands.telegram_menu_commands())
+
+    ready_thread = threading.Thread(target=_notify_service_ready, daemon=True)
+    ready_thread.start()
 
     # Bat tin hieu tat/khoi dong lai tren macOS & Linux (Windows dung
     # Event ID 1074 rieng, xem scripts/windows/). signal.SIGTERM khong ton
