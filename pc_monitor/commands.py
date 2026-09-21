@@ -12,6 +12,7 @@ from . import config
 from . import system_info
 from . import actions
 from . import telegram_api
+from . import autostart
 
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
@@ -73,6 +74,9 @@ def build_help_text() -> str:
         "",
         "<b>Khac</b>",
         f"/note noi dung — luu ghi chu vao may{_disabled_suffix(config.ENABLE_NOTE)}",
+        f"/autostart — dang ky chay khi khoi dong may{_disabled_suffix(config.ENABLE_AUTOSTART)}",
+        f"/autostart_off — go bo service khoi dong{_disabled_suffix(config.ENABLE_AUTOSTART)}",
+        f"/service — xem service khoi dong da cai chua{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         "/help — xem lai danh sach nay",
         "",
         "Neu may da tat, moi lenh se khong co phan hoi.",
@@ -102,6 +106,10 @@ def telegram_menu_commands() -> list:
         items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
     if config.ENABLE_NOTE:
         items.append(("note", "Luu ghi chu vao may"))
+    if config.ENABLE_AUTOSTART:
+        items.append(("autostart", "Dang ky chay khi khoi dong may"))
+        items.append(("autostart_off", "Go bo service khoi dong"))
+        items.append(("service", "Trang thai service khoi dong"))
     items.append(("help", "Danh sach toan bo lenh"))
     return [{"command": name, "description": desc} for name, desc in items]
 
@@ -175,6 +183,36 @@ def _cmd_note(chat_id: str, args: str) -> None:
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
 
 
+def _cmd_autostart(chat_id: str, args: str) -> None:
+    if not config.ENABLE_AUTOSTART:
+        telegram_api.send_message(chat_id, "Tinh nang dang ky service dang bi tat (ENABLE_AUTOSTART=false trong .env).")
+        return
+    arg = args.strip().lower()
+    if arg in ("off", "stop", "disable", "uninstall"):
+        _cmd_autostart_off(chat_id, "")
+        return
+    if arg in ("status", "info"):
+        _cmd_service(chat_id, "")
+        return
+    ok, msg = autostart.install(start_listener_now=False)
+    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+
+def _cmd_autostart_off(chat_id: str, args: str) -> None:
+    if not config.ENABLE_AUTOSTART:
+        telegram_api.send_message(chat_id, "Tinh nang dang ky service dang bi tat (ENABLE_AUTOSTART=false trong .env).")
+        return
+    ok, msg = autostart.uninstall()
+    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+
+def _cmd_service(chat_id: str, args: str) -> None:
+    if not config.ENABLE_AUTOSTART:
+        telegram_api.send_message(chat_id, "Tinh nang dang ky service dang bi tat (ENABLE_AUTOSTART=false trong .env).")
+        return
+    telegram_api.send_message(chat_id, autostart.status_text())
+
+
 def _request_confirmation(chat_id: str, action: str, prompt: str) -> None:
     _pending_confirmations[chat_id] = {
         "action": action,
@@ -245,6 +283,9 @@ COMMAND_TABLE = {
     "/screenshot": _cmd_screenshot,
     "/lock": _cmd_lock,
     "/note": _cmd_note,
+    "/autostart": _cmd_autostart,
+    "/autostart_off": _cmd_autostart_off,
+    "/service": _cmd_service,
     "/shutdown_now": _cmd_shutdown_now,
     "/restart_now": _cmd_restart_now,
     "/confirm_shutdown": _cmd_confirm_shutdown,

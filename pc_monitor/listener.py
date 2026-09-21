@@ -12,6 +12,7 @@ from . import config
 from . import telegram_api
 from . import commands
 from . import system_info
+from . import autostart
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
@@ -100,6 +101,7 @@ def _alert_watcher_loop() -> None:
 
 def run() -> None:
     config.validate()
+    autostart.mark_listener_role()
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )

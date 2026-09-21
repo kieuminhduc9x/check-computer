@@ -63,6 +63,7 @@ ENABLE_SCREENSHOT = _get_bool("ENABLE_SCREENSHOT", True)
 ENABLE_LOCK = _get_bool("ENABLE_LOCK", True)
 ENABLE_SHUTDOWN_RESTART = _get_bool("ENABLE_SHUTDOWN_RESTART", True)
 ENABLE_NOTE = _get_bool("ENABLE_NOTE", True)
+ENABLE_AUTOSTART = _get_bool("ENABLE_AUTOSTART", True)
 
 NOTE_FILE = PROJECT_ROOT / os.getenv("NOTE_FILE", "notes.txt")
 LOG_FILE = PROJECT_ROOT / "pc_monitor.log"

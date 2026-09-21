@@ -8,6 +8,9 @@ Cach dung:
     python main.py heartbeat    -> bao may VAN DANG BAT (dinh ky)
     python main.py test         -> gui tin nhan thu de kiem tra cau hinh
     python main.py listen       -> chay nen lien tuc, lang nghe lenh Telegram
+    python main.py install      -> dang ky service tu chay khi khoi dong / dang nhap
+    python main.py uninstall    -> go bo service tu khoi dong
+    python main.py service      -> xem service da dang ky chua
 
 Cau hinh trong file .env o cung thu muc voi main.py (xem .env.example).
 """
@@ -18,6 +21,7 @@ from pc_monitor import config
 from pc_monitor import commands
 from pc_monitor import telegram_api
 from pc_monitor import listener
+from pc_monitor import autostart
 
 
 def run_one_shot(event: str) -> None:
@@ -35,7 +39,10 @@ def run_one_shot(event: str) -> None:
 
 
 def main() -> None:
-    valid = ("startup", "shutdown", "heartbeat", "test", "listen")
+    valid = (
+        "startup", "shutdown", "heartbeat", "test", "listen",
+        "install", "uninstall", "service",
+    )
     if len(sys.argv) < 2 or sys.argv[1] not in valid:
         print(__doc__)
         sys.exit(1)
@@ -43,6 +50,8 @@ def main() -> None:
     event = sys.argv[1]
     if event == "listen":
         listener.run()
+    elif event in ("install", "uninstall", "service"):
+        autostart.run_cli(event)
     else:
         run_one_shot(event)
 

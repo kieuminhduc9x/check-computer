@@ -20,7 +20,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
 echo "Thu muc project: $PROJECT_DIR"
 
@@ -39,9 +38,6 @@ if [ -z "$BOT_TOKEN_LINE" ] || [[ "$BOT_TOKEN_LINE" == DAN_* ]] || \
     exit 1
 fi
 
-HEARTBEAT_MINUTES=$(grep -E '^HEARTBEAT_MINUTES=' "$ENV_FILE" | cut -d'=' -f2- || echo "60")
-HEARTBEAT_MINUTES=${HEARTBEAT_MINUTES:-60}
-
 PYTHON_BIN="$(command -v python3 || true)"
 if [ -z "$PYTHON_BIN" ]; then
     echo "LOI: Khong tim thay python3. Cai bang: sudo apt install python3 python3-pip (Debian/Ubuntu)"
@@ -53,37 +49,5 @@ echo "Dang cai thu vien..."
 "$PYTHON_BIN" -m pip install -r "$PROJECT_DIR/requirements.txt" --quiet --break-system-packages 2>/dev/null || \
     "$PYTHON_BIN" -m pip install -r "$PROJECT_DIR/requirements.txt" --quiet
 
-mkdir -p "$SYSTEMD_USER_DIR"
-
-generate_unit() {
-    local template="$1"
-    local output="$2"
-    sed -e "s#__PYTHON_BIN__#$PYTHON_BIN#g" \
-        -e "s#__PROJECT_DIR__#$PROJECT_DIR#g" \
-        -e "s#__HEARTBEAT_MINUTES__#$HEARTBEAT_MINUTES#g" \
-        "$template" > "$output"
-}
-
-echo "Dang tao cac systemd unit..."
-generate_unit "$SCRIPT_DIR/pcmonitor-startup.service.template"   "$SYSTEMD_USER_DIR/pcmonitor-startup.service"
-generate_unit "$SCRIPT_DIR/pcmonitor-listener.service.template"  "$SYSTEMD_USER_DIR/pcmonitor-listener.service"
-generate_unit "$SCRIPT_DIR/pcmonitor-heartbeat.service.template" "$SYSTEMD_USER_DIR/pcmonitor-heartbeat.service"
-generate_unit "$SCRIPT_DIR/pcmonitor-heartbeat.timer.template"   "$SYSTEMD_USER_DIR/pcmonitor-heartbeat.timer"
-
-systemctl --user daemon-reload
-
-echo "Dang bat cac dich vu..."
-systemctl --user enable --now pcmonitor-startup.service
-systemctl --user enable --now pcmonitor-listener.service
-systemctl --user enable --now pcmonitor-heartbeat.timer
-
-echo ""
-echo "================================================="
-echo "HOAN TAT! Da cai va bat 3 dich vu (systemd --user)."
-echo "Kiem tra: systemctl --user status pcmonitor-listener.service"
-echo "Test ngay: $PYTHON_BIN $PROJECT_DIR/main.py test"
-echo "Thu tren Telegram: gui /help cho bot cua ban"
-echo "Log: $PROJECT_DIR/pc_monitor.log va pc_monitor_systemd.log"
-echo ""
-echo "Meo: neu muon dich vu chay ca khi ban CHUA dang nhap, chay:"
-echo "  sudo loginctl enable-linger \$USER"
+echo "Dang ky service khoi dong..."
+"$PYTHON_BIN" "$PROJECT_DIR/main.py" install

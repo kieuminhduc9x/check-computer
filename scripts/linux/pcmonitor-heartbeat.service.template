@@ -6,6 +6,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=__PROJECT_DIR__
-ExecStart=__PYTHON_BIN__ __PROJECT_DIR__/main.py heartbeat
+ExecStart="__PYTHON_BIN__" "__PROJECT_DIR__/main.py" heartbeat
 StandardOutput=append:__PROJECT_DIR__/pc_monitor_systemd.log
 StandardError=append:__PROJECT_DIR__/pc_monitor_systemd.log

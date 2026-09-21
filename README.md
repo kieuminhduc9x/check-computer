@@ -27,7 +27,7 @@ qua file `.env` de dung cho **nhieu may tinh va nhieu bot Telegram khac nhau**.
 
 ```
 pc-monitor-pro/
-├── main.py                    # diem vao: startup/shutdown/heartbeat/test/listen
+├── main.py                    # startup/shutdown/heartbeat/test/listen/install
 ├── requirements.txt           # danh sach thu vien python can cai
 ├── .env.example                # file cau hinh mau (copy thanh .env)
 ├── pc_monitor/                 # ma nguon chinh
@@ -35,6 +35,7 @@ pc-monitor-pro/
 │   ├── telegram_api.py         # goi Telegram Bot API
 │   ├── system_info.py          # CPU/RAM/dia/uptime/ip (cross-platform)
 │   ├── actions.py              # screenshot/lock/shutdown/restart (rieng tung OS)
+│   ├── autostart.py            # dang ky service khoi dong (Windows/macOS/Linux)
 │   ├── commands.py             # noi dung + dieu phoi lenh Telegram
 │   └── listener.py             # vong lap long-polling + canh bao CPU/RAM
 └── scripts/
@@ -51,7 +52,7 @@ pc-monitor-pro/
 | Hoi truc tiep | `/status`, `/ping` — hoi la tra loi ngay (CPU/RAM, app dang mo), im lang = may dang tat |
 | Giam sat | `/apps`, `/cpu`, `/ram`, `/disk`, `/procs`, `/ip` |
 | Dieu khien | `/screenshot`, `/lock`, `/shutdown_now`, `/restart_now` (co xac nhan) |
-| Tien ich | `/note` — gui ghi chu nhanh luu vao may |
+| Tien ich | `/note` — ghi chu; `/autostart` — dang ky chay khi khoi dong |
 | Canh bao chu dong | Tu bao khi CPU/RAM vuot nguong dat trong `.env` |
 | Bao mat | Chi tra loi cac `chat_id` nam trong danh sach cho phep |
 
@@ -125,30 +126,56 @@ Neu loi, xem [Troubleshooting](#troubleshooting).
 python main.py listen
 ```
 Mo Telegram, gui `/help` cho bot — neu bot tra loi ngay la thanh cong. Nhan
-`Ctrl+C` de dung thu, roi tiep tuc cai dat lich chay tu dong ben duoi.
+`Ctrl+C` de dung thu, roi dang ky chay khi khoi dong o buoc tiep theo.
+
+### Buoc 7: Dang ky chay khi khoi dong (moi OS)
+
+Lenh nay giong nhau tren Windows, macOS va Linux — moi may chi can chay 1 lan:
+
+```bash
+python main.py install
+```
+
+Sau do bot tu chay khi **dang nhap / khoi dong may**: bao startup, lang nghe
+lenh Telegram, gui heartbeat. Kiem tra:
+
+```bash
+python main.py service
+```
+
+Go bo:
+
+```bash
+python main.py uninstall
+```
+
+Cung co the dang ky tu dien thoai: gui `/autostart` cho bot (may phai dang
+chay `listen`). `/service` de xem da cai chua, `/autostart_off` de go.
 
 ---
 
 ## Cai dat rieng tren Windows
 
-Chay lich chay tu dong bang **Task Scheduler**.
+Cach khuyen nghi: `python main.py install` (khong can Administrator).
+
+Hoac chay script:
 
 ```powershell
 cd scripts\windows
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 .\setup_task_scheduler.ps1
 ```
-(Phai mo PowerShell voi quyen **Administrator**: chuot phai -> Run as administrator)
 
-Script tao 4 task: `PCMonitorPro_Startup`, `PCMonitorPro_Shutdown`,
-`PCMonitorPro_Heartbeat`, `PCMonitorPro_Listener`. Kiem tra trong ung dung
-**Task Scheduler** -> Task Scheduler Library.
+Tao 3 task: `PCMonitorPro_Startup`, `PCMonitorPro_Heartbeat`,
+`PCMonitorPro_Listener`. Kiem tra trong **Task Scheduler**.
 
-**Go bo:** `.\setup_task_scheduler.ps1 -Uninstall`
+**Go bo:** `python main.py uninstall` hoac `.\setup_task_scheduler.ps1 -Uninstall`
 
 ## Cai dat rieng tren macOS
 
-Chay bang **launchd** (LaunchAgents cua nguoi dung).
+Cach khuyen nghi: `python3 main.py install` (launchd LaunchAgents).
+
+Hoac:
 
 ```bash
 cd scripts/macos
@@ -156,16 +183,12 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Script tao 3 LaunchAgent: `com.pcmonitor.startup`, `com.pcmonitor.heartbeat`,
-`com.pcmonitor.listener`, tu dong nap bang `launchctl load`.
+Tao 3 LaunchAgent: `com.pcmonitor.startup`, `com.pcmonitor.heartbeat`,
+`com.pcmonitor.listener`.
 
 Kiem tra: `launchctl list | grep pcmonitor`
 
-**Go bo:**
-```bash
-cd scripts/macos
-./uninstall.sh
-```
+**Go bo:** `python3 main.py uninstall` hoac `./uninstall.sh`
 
 > macOS se hoi quyen truy cap **Accessibility** / **Screen Recording** khi
 > `python3` lan dau goi lenh khoa man hinh hoac chup man hinh — vao
@@ -173,7 +196,9 @@ cd scripts/macos
 
 ## Cai dat rieng tren Linux
 
-Chay bang **systemd (--user)**.
+Cach khuyen nghi: `python3 main.py install` (systemd --user).
+
+Hoac:
 
 ```bash
 cd scripts/linux
@@ -181,9 +206,8 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Script tao va bat 3 don vi: `pcmonitor-startup.service`,
-`pcmonitor-listener.service`, `pcmonitor-heartbeat.timer` +
-`pcmonitor-heartbeat.service`.
+Tao: `pcmonitor-startup.service`, `pcmonitor-listener.service`,
+`pcmonitor-heartbeat.timer` + `pcmonitor-heartbeat.service`.
 
 Kiem tra: `systemctl --user status pcmonitor-listener.service`
 
@@ -193,11 +217,7 @@ man hinh), chay them 1 lan:
 sudo loginctl enable-linger $USER
 ```
 
-**Go bo:**
-```bash
-cd scripts/linux
-./uninstall.sh
-```
+**Go bo:** `python3 main.py uninstall` hoac `./uninstall.sh`
 
 > Cac lenh `/lock`, `/screenshot` can co phien dang nhap do hoa (X11/Wayland)
 > dang chay — phu hop khi may co man hinh va ban dang dang nhap. Tren server
@@ -221,6 +241,7 @@ cd scripts/linux
 | `ENABLE_LOCK` | Khong | Bat/tat lenh `/lock` |
 | `ENABLE_SHUTDOWN_RESTART` | Khong | Bat/tat lenh `/shutdown_now`, `/restart_now` |
 | `ENABLE_NOTE` | Khong | Bat/tat lenh `/note` |
+| `ENABLE_AUTOSTART` | Khong | Bat/tat lenh `/autostart`, `/autostart_off`, `/service` |
 | `NOTE_FILE` | Khong | Ten file luu ghi chu (mac dinh `notes.txt`) |
 
 ## Danh sach toan bo lenh Telegram
@@ -240,7 +261,10 @@ Gui cac lenh nay cho bot cua ban tren Telegram:
 | `/lock` | Khoa man hinh may ngay lap tuc |
 | `/shutdown_now` | Yeu cau tat may (phai `/confirm_shutdown` trong 30s de xac nhan) |
 | `/restart_now` | Yeu cau khoi dong lai (phai `/confirm_restart` trong 30s de xac nhan) |
-| `/note <noi dung>` | Luu 1 dong ghi chu vao file `notes.txt` tren may |
+| `/note noi dung` | Luu 1 dong ghi chu vao file `notes.txt` tren may |
+| `/autostart` | Dang ky bot tu chay khi khoi dong / dang nhap |
+| `/autostart_off` | Go bo service khoi dong |
+| `/service` | Xem service khoi dong da cai chua |
 | `/help` hoac `/start` | Xem lai danh sach lenh |
 
 Neu may da tat, moi lenh o tren se **khong co phan hoi gi ca** — do chinh
@@ -288,7 +312,8 @@ ALLOWED_CHAT_IDS=987654321,111222333
 | `LOI: khong tim thay file .env` | Chua `cp .env.example .env` |
 | `LOI CAU HINH: BOT_TOKEN chua duoc dien dung` | Con nguyen chu `DAN_...` trong `.env` |
 | `python main.py test` bao HTTPError 404 | Token sai, kiem tra lai tu BotFather |
-| Bot khong tra loi `/status` | Tien trinh `listen` chua chay — kiem tra Task Scheduler/launchctl/systemctl |
+| Bot khong tra loi `/status` | Tien trinh `listen` chua chay — kiem tra Task Scheduler/launchctl/systemctl, hoac chay `python main.py install` |
+| `/autostart` bao loi tren Windows | Thu chay `python main.py install` trong Command Prompt; mot so may can dang nhap Windows bang dung tai khoan se dung may |
 | `ModuleNotFoundError` | Chua `pip install -r requirements.txt` dung moi truong python dang dung de chay |
 | `/screenshot` bao loi tren Linux | Can co man hinh do hoa (X11/Wayland) dang chay, khong dung duoc tren server khong man hinh |
 | `/lock` khong hoat dong tren Linux | Desktop environment khong ho tro lenh khoa duoc thu (xem `actions.py`), thu cai `xdg-utils` |
