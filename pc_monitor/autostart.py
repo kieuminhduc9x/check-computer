@@ -331,8 +331,11 @@ def _win_write_cmd(name: str, action: str) -> Path:
     return dest
 
 
-def _schtasks(args: list[str]) -> subprocess.CompletedProcess:
-    return _run(["schtasks", *args])
+def _schtasks(args: list[str], timeout: int = 8) -> subprocess.CompletedProcess:
+    try:
+        return _run(["schtasks", *args], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["schtasks", *args], 124, "", "timeout")
 
 
 def _win_create_task(name: str, script: Path, extra: list[str]) -> subprocess.CompletedProcess:
@@ -623,8 +626,10 @@ def _uninstall_windows() -> tuple[bool, str]:
 def _status_windows() -> str:
     lines = ["Windows Task Scheduler:"]
     for name in WIN_TASKS:
-        result = _schtasks(["/Query", "/TN", name])
-        if result.returncode == 0:
+        result = _schtasks(["/Query", "/TN", name], timeout=5)
+        if result.returncode == 124 or (result.stderr or "") == "timeout":
+            lines.append(f"- {name}: khong doc duoc (Task Scheduler cham sau reboot)")
+        elif result.returncode == 0:
             running = "Ready/Running"
             blob = (result.stdout or "").lower()
             if "running" in blob:
@@ -852,17 +857,26 @@ def is_listener_running() -> tuple[bool, str]:
     return False, "Khong thay process main.py listen"
 
 
+def is_registered() -> tuple[bool, str]:
+    try:
+        return _is_autostart_registered()
+    except Exception as e:
+        return False, str(e)
+
+
 def _is_autostart_registered() -> tuple[bool, str]:
     """Listener co duoc dang ky chay luc dang nhap khong."""
     system = _os()
     if system == "Windows":
-        task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"])
         startup = _win_startup_dir() / "PCMonitorPro_Listener.vbs"
         startup_cmd = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
-        if task.returncode == 0:
-            return True, "Task Scheduler: PCMonitorPro_Listener"
         if startup.exists() or startup_cmd.exists():
             return True, "Thu muc Startup (chay an luc dang nhap)"
+        task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"], timeout=2)
+        if task.returncode == 0:
+            return True, "Task Scheduler: PCMonitorPro_Listener"
+        if task.returncode == 124 or (task.stderr or "") == "timeout":
+            return False, "Task Scheduler cham sau reboot, chua xac dinh duoc"
         return False, "Chua co task Listener va chua co file Startup"
     if system == "Darwin":
         dest = _macos_plist_path("listener")
@@ -878,7 +892,7 @@ def _is_autostart_registered() -> tuple[bool, str]:
     return False, f"He dieu hanh {system} chua ho tro"
 
 
-def status_text() -> str:
+def status_text(*, fast: bool = True) -> str:
     system = _os()
     try:
         ok, detail = _is_autostart_registered()
@@ -926,7 +940,14 @@ def status_text() -> str:
         f"Python: <code>{_html(_python_bin())}</code>\n"
     )
     try:
-        if system == "Darwin":
+        if fast and system == "Windows":
+            dest_dir = _win_startup_dir()
+            body_lines = ["Windows (khong cho Task Scheduler):"]
+            for name in WIN_STARTUP_CMDS:
+                path = dest_dir / name
+                body_lines.append(f"- {name}: {'co' if path.exists() else 'chua co'}")
+            body = "\n".join(body_lines)
+        elif system == "Darwin":
             body = _status_macos()
         elif system == "Linux":
             body = _status_linux()
@@ -951,7 +972,7 @@ def run_cli(action: str) -> None:
         ok, msg = uninstall()
     elif action in ("service", "autostart_status"):
         print(
-            status_text()
+            status_text(fast=False)
             .replace("<b>", "")
             .replace("</b>", "")
             .replace("<code>", "")

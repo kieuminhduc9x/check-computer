@@ -6,6 +6,7 @@ Lenh nguy hiem (tat may / khoi dong lai) can xac nhan 2 buoc trong vong 30s.
 """
 
 import time
+import threading
 from datetime import datetime
 import platform
 
@@ -239,20 +240,43 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
     if arg in ("status", "info"):
         _cmd_service(chat_id, "")
         return
-    telegram_api.send_chat_action(chat_id)
-    if platform.system() == "Windows":
+    telegram_api.send_message(chat_id, "Dang kiem tra /autostart...")
+    force = arg in ("force", "reinstall", "again")
+
+    def _run() -> None:
+        if not force:
+            try:
+                already, detail = autostart.is_registered()
+            except Exception:
+                already, detail = False, ""
+            if already:
+                telegram_api.send_message(
+                    chat_id,
+                    "✅ Autostart <b>da dang ky</b>, khong cai lai "
+                    "(tranh UAC treo sau reboot).\n"
+                    f"{detail}\n"
+                    "Xem chi tiet: /service\n"
+                    "Muon cai lai: /autostart force",
+                )
+                return
+        if platform.system() == "Windows":
+            telegram_api.send_message(
+                chat_id,
+                "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
+                "Hay bam <b>Yes</b> tren man hinh may (khong bam duoc tu Telegram).\n"
+                "Hoac tren may chay: <code>python main.py install</code>.",
+            )
+        ok, msg = autostart.install(start_listener_now=False)
+        prefix = (
+            "Chi dang ky lich khoi dong, <b>giu listen hien tai</b> "
+            "(khong mo process thu 2 — tranh loi getUpdates Conflict).\n"
+        )
         telegram_api.send_message(
             chat_id,
-            "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
-            "Hay bam <b>Yes</b> de dang ky Task Scheduler bang lenh "
-            "<code>python main.py install</code>.",
+            ("✅ " if ok else "❌ ") + prefix + msg.replace("&", "&amp;").replace("<", "&lt;"),
         )
-    ok, msg = autostart.install(start_listener_now=False)
-    prefix = (
-        "Chi dang ky lich khoi dong, <b>giu listen hien tai</b> "
-        "(khong mo process thu 2 — tranh loi getUpdates Conflict).\n"
-    )
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + prefix + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _cmd_autostart_off(chat_id: str, args: str) -> None:
@@ -270,21 +294,24 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
 
 
 def _cmd_service(chat_id: str, args: str) -> None:
-    telegram_api.send_chat_action(chat_id)
-    try:
-        text = autostart.status_text()
-    except Exception as e:
-        safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        telegram_api.send_message(chat_id, f"❌ Khong doc duoc trang thai service.\n{safe}")
-        return
-    sent = telegram_api.send_message(chat_id, text)
-    if not sent:
-        telegram_api.send_message(
-            chat_id,
-            "Khong gui duoc chi tiet /service (tin qua dai hoac HTML loi). "
-            "Tren may chay: python main.py service",
-            parse_mode="",
-        )
+    telegram_api.send_message(chat_id, "Dang doc /service...")
+
+    def _run() -> None:
+        try:
+            text = autostart.status_text(fast=True)
+        except Exception as e:
+            safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            telegram_api.send_message(chat_id, f"❌ Khong doc duoc trang thai service.\n{safe}")
+            return
+        sent = telegram_api.send_message(chat_id, text)
+        if not sent:
+            telegram_api.send_message(
+                chat_id,
+                "Khong gui duoc chi tiet /service. Tren may: python main.py service",
+                parse_mode="",
+            )
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _power_lock_line() -> str:
