@@ -250,6 +250,8 @@ sudo loginctl enable-linger $USER
 | `ENABLE_LOCK` | Khong | Bat/tat lenh `/lock` |
 | `ENABLE_CLOSE_APPS` | Khong | Bat/tat lenh `/close_apps` |
 | `ENABLE_VPN` | Khong | Bat/tat lenh `/vpn`, `/vpn_on`, `/vpn_off` (Pritunl CLI) |
+| `ENABLE_AUTO_UPDATE` | Khong | Listen tu `git pull --ff-only` roi restart khi origin co commit moi |
+| `AUTO_UPDATE_MINUTES` | Khong | So phut giua cac lan kiem tra (mac dinh 60; 0 = chi dung `/update`) |
 | `ENABLE_SHUTDOWN_RESTART` | Khong | Bat/tat lenh `/shutdown_now`, `/restart_now` |
 | `ENABLE_NOTE` | Khong | Bat/tat lenh `/note` |
 | `ENABLE_AUTOSTART` | Khong | Bat/tat lenh `/autostart`, `/autostart_off`, `/service` |
@@ -280,6 +282,7 @@ Gui cac lenh nay cho bot cua ban tren Telegram:
 | `/autostart` | Dang ky bot tu chay khi khoi dong / dang nhap |
 | `/autostart_off` | Go bo service khoi dong |
 | `/service` | Xem service khoi dong da cai chua |
+| `/update` | Git pull --ff-only va restart listen (nap code moi) |
 | `/help` hoac `/start` | Xem lai danh sach lenh |
 
 Neu may da tat, moi lenh o tren se **khong co phan hoi gi ca** — do chinh

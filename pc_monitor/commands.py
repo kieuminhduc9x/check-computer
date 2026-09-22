@@ -16,6 +16,7 @@ from . import actions
 from . import telegram_api
 from . import autostart
 from . import vpn
+from . import updater
 
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
@@ -94,6 +95,7 @@ def build_help_text() -> str:
         f"/autostart — dang ky chay khi khoi dong may{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/autostart_off — go bo service khoi dong{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/service — xem service khoi dong da cai chua{_disabled_suffix(config.ENABLE_AUTOSTART)}",
+        f"/update — git pull va restart listen{_disabled_suffix(config.ENABLE_AUTO_UPDATE)}",
         "/help — xem lai danh sach nay",
         "",
         "Neu may da tat, moi lenh se khong co phan hoi.",
@@ -135,6 +137,8 @@ def telegram_menu_commands() -> list:
         items.append(("autostart", "Dang ky chay khi khoi dong may"))
         items.append(("autostart_off", "Go bo service khoi dong"))
     items.append(("service", "Trang thai service khoi dong"))
+    if config.ENABLE_AUTO_UPDATE:
+        items.append(("update", "Git pull va restart listen"))
     items.append(("help", "Danh sach toan bo lenh"))
     return [{"command": name, "description": desc} for name, desc in items]
 
@@ -320,6 +324,19 @@ def _cmd_service(chat_id: str, args: str) -> None:
                 "Khong gui duoc chi tiet /service. Tren may: python main.py service",
                 parse_mode="",
             )
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _cmd_update(chat_id: str, args: str) -> None:
+    telegram_api.send_message(chat_id, "Dang git pull --ff-only...")
+
+    def _run() -> None:
+        ok, msg, will_restart = updater.apply_and_restart()
+        safe = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + safe)
+        if ok and will_restart:
+            updater.spawn_new_listener()
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -569,6 +586,7 @@ COMMAND_TABLE = {
     "/autostart": _cmd_autostart,
     "/autostart_off": _cmd_autostart_off,
     "/service": _cmd_service,
+    "/update": _cmd_update,
     "/shutdown_now": _cmd_shutdown_now,
     "/restart_now": _cmd_restart_now,
     "/confirm_shutdown": _cmd_confirm_shutdown,

@@ -5,6 +5,7 @@
 .last_ready_notify
 .listener.pid
 .listener.takeover
+.last_code_update
 notes.txt
 __pycache__/
 *.pyc

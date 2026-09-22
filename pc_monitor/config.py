@@ -74,6 +74,9 @@ SCREENSHOT_TMP = PROJECT_ROOT / ".last_screenshot.png"
 READY_STAMP_FILE = PROJECT_ROOT / ".last_ready_notify"
 LISTENER_PID_FILE = PROJECT_ROOT / ".listener.pid"
 TAKEOVER_FILE = PROJECT_ROOT / ".listener.takeover"
+UPDATE_STAMP_FILE = PROJECT_ROOT / ".last_code_update"
+ENABLE_AUTO_UPDATE = _get_bool("ENABLE_AUTO_UPDATE", True)
+AUTO_UPDATE_MINUTES = max(0, _get_int("AUTO_UPDATE_MINUTES", 60))
 
 
 def validate(exit_on_error: bool = True) -> list:

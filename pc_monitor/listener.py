@@ -14,6 +14,7 @@ from . import telegram_api
 from . import commands
 from . import system_info
 from . import autostart
+from . import updater
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
@@ -103,10 +104,50 @@ def _alert_watcher_loop() -> None:
         time.sleep(config.ALERT_CHECK_INTERVAL_SECONDS)
 
 
+def _auto_update_loop() -> None:
+    if not config.ENABLE_AUTO_UPDATE or config.AUTO_UPDATE_MINUTES <= 0:
+        return
+    telegram_api.log(
+        f"Auto-update: moi {config.AUTO_UPDATE_MINUTES} phut se git pull --ff-only."
+    )
+    time.sleep(180)
+    interval = max(10, config.AUTO_UPDATE_MINUTES) * 60
+    while True:
+        try:
+            ok, msg, will_restart = updater.apply_and_restart()
+            if ok and will_restart:
+                telegram_api.send_to_all(
+                    "🔄 Phat hien code moi tren git. Dang restart listen..."
+                )
+                updater.spawn_new_listener()
+            elif not ok:
+                telegram_api.log(f"Auto-update: {msg}")
+        except Exception as e:
+            telegram_api.log(f"Auto-update loi: {e}")
+        time.sleep(interval)
+
+
 def _notify_service_ready() -> None:
     """Bao Telegram khi listener start — retry neu may moi boot, mang chua len.
     Bo qua neu task startup vua gui tin trong 2 phut (tranh 2 tin trung)."""
     manual = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    try:
+        if config.UPDATE_STAMP_FILE.exists():
+            ts = float(config.UPDATE_STAMP_FILE.read_text(encoding="utf-8").strip())
+            if (time.time() - ts) < 180:
+                telegram_api.send_to_all(
+                    "🔄 <b>DA CAP NHAT CODE</b>\n"
+                    "Listen moi dang chay — gui /help, /vpn, /service de kiem tra."
+                )
+                try:
+                    config.UPDATE_STAMP_FILE.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                telegram_api.mark_boot_notified()
+                telegram_api.log("Da bao Telegram: code moi da nap.")
+                return
+    except Exception:
+        pass
     if (not manual) and telegram_api.boot_notify_recently_sent(120):
         telegram_api.log("Bo qua thong bao ready: startup vua gui roi.")
         return
@@ -156,6 +197,8 @@ def run() -> None:
         telegram_api.log(
             f"Da bat canh bao: CPU>={config.ALERT_CPU_PERCENT}% RAM>={config.ALERT_RAM_PERCENT}%"
         )
+
+    threading.Thread(target=_auto_update_loop, daemon=True).start()
 
     offset = _load_offset()
 
