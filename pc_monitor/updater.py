@@ -89,12 +89,14 @@ def pull_ff_only() -> tuple[bool, str, bool]:
         return False, str(e), False
 
 
-def spawn_new_listener(*, notify_update: bool = True) -> None:
+def spawn_new_listener(*, notify_update: bool = True, kind: str | None = None) -> None:
     """Mo listen an (pythonw) roi thoat process hien tai."""
+    if kind is None:
+        kind = "update" if notify_update else ""
     try:
         config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
-        if notify_update:
-            config.UPDATE_STAMP_FILE.write_text(str(time.time()), encoding="utf-8")
+        if kind:
+            config.UPDATE_STAMP_FILE.write_text(f"{kind} {time.time()}", encoding="utf-8")
     except OSError:
         pass
 

@@ -12,6 +12,7 @@ Cach dung:
     python main.py install      -> dang ky service (Windows tu hoi quyen Admin / UAC)
     python main.py uninstall    -> go bo service tu khoi dong
     python main.py service      -> xem service da dang ky chua
+    python main.py reload       -> khoi dong lai listen (nap code, khong git pull)
 
 Cau hinh trong file .env o cung thu muc voi main.py (xem .env.example).
 """
@@ -44,7 +45,7 @@ def run_one_shot(event: str) -> None:
 def main() -> None:
     valid = (
         "startup", "shutdown", "heartbeat", "test", "listen", "hide",
-        "install", "uninstall", "service",
+        "install", "uninstall", "service", "reload",
     )
     if len(sys.argv) < 2 or sys.argv[1] not in valid:
         print(__doc__)
@@ -56,6 +57,9 @@ def main() -> None:
     elif event == "hide":
         print("Bat listen an (pythonw). Co the dong Git Bash.", flush=True)
         updater.spawn_new_listener(notify_update=False)
+    elif event == "reload":
+        print("Reload listen...", flush=True)
+        updater.spawn_new_listener(kind="reload")
     elif event in ("install", "uninstall", "service"):
         autostart.run_cli(event)
     else:

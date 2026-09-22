@@ -133,18 +133,32 @@ def _notify_service_ready() -> None:
     manual = bool(getattr(sys.stdin, "isatty", lambda: False)())
     try:
         if config.UPDATE_STAMP_FILE.exists():
-            ts = float(config.UPDATE_STAMP_FILE.read_text(encoding="utf-8").strip())
+            raw = config.UPDATE_STAMP_FILE.read_text(encoding="utf-8").strip()
+            parts = raw.split()
+            kind = "update"
+            ts = 0.0
+            if len(parts) == 1:
+                ts = float(parts[0])
+            elif len(parts) >= 2:
+                kind = parts[0]
+                ts = float(parts[-1])
             if (time.time() - ts) < 180:
-                telegram_api.send_to_all(
-                    "🔄 <b>DA CAP NHAT CODE</b>\n"
-                    "Listen moi dang chay — gui /help, /vpn, /service de kiem tra."
-                )
+                if kind == "reload":
+                    telegram_api.send_to_all(
+                        "🔄 <b>DA RELOAD SERVICE</b>\n"
+                        "Listen moi dang chay — gui /help, /vpn, /service de kiem tra."
+                    )
+                else:
+                    telegram_api.send_to_all(
+                        "🔄 <b>DA CAP NHAT CODE</b>\n"
+                        "Listen moi dang chay — gui /help, /vpn, /service de kiem tra."
+                    )
                 try:
                     config.UPDATE_STAMP_FILE.unlink(missing_ok=True)
                 except OSError:
                     pass
                 telegram_api.mark_boot_notified()
-                telegram_api.log("Da bao Telegram: code moi da nap.")
+                telegram_api.log(f"Da bao Telegram: {kind} xong.")
                 return
     except Exception:
         pass

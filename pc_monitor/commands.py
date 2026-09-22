@@ -95,6 +95,8 @@ def build_help_text() -> str:
         f"/autostart — dang ky chay khi khoi dong may{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/autostart_off — go bo service khoi dong{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/service — xem service khoi dong da cai chua{_disabled_suffix(config.ENABLE_AUTOSTART)}",
+        "/reload — khoi dong lai listen (nap code, khong git pull)",
+        "/service reload — giong /reload",
         f"/update — git pull va restart listen{_disabled_suffix(config.ENABLE_AUTO_UPDATE)}",
         "/help — xem lai danh sach nay",
         "",
@@ -137,6 +139,7 @@ def telegram_menu_commands() -> list:
         items.append(("autostart", "Dang ky chay khi khoi dong may"))
         items.append(("autostart_off", "Go bo service khoi dong"))
     items.append(("service", "Trang thai service khoi dong"))
+    items.append(("reload", "Khoi dong lai listen (nap code)"))
     if config.ENABLE_AUTO_UPDATE:
         items.append(("update", "Git pull va restart listen"))
     items.append(("help", "Danh sach toan bo lenh"))
@@ -254,6 +257,9 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
     if arg in ("status", "info"):
         _cmd_service(chat_id, "")
         return
+    if arg in ("reload", "restart", "refresh"):
+        _cmd_reload(chat_id, "")
+        return
     telegram_api.send_message(chat_id, "Dang kiem tra /autostart...")
     force = arg in ("force", "reinstall", "again")
 
@@ -307,7 +313,25 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
 
 
+def _cmd_reload(chat_id: str, args: str) -> None:
+    telegram_api.log(f"Nhan /reload tu {chat_id}")
+    telegram_api.send_message(
+        chat_id,
+        "Dang reload listen...\nListen cu se thoat, listen moi se bao khi san sang.",
+        parse_mode="",
+    )
+
+    def _run() -> None:
+        updater.spawn_new_listener(kind="reload")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _cmd_service(chat_id: str, args: str) -> None:
+    arg = args.strip().lower()
+    if arg in ("reload", "restart", "refresh"):
+        _cmd_reload(chat_id, "")
+        return
     telegram_api.log(f"Nhan /service tu {chat_id}")
     try:
         text = autostart.status_text(fast=True)
@@ -594,6 +618,8 @@ COMMAND_TABLE = {
     "/autostart_off": _cmd_autostart_off,
     "/service": _cmd_service,
     "/svc": _cmd_service,
+    "/reload": _cmd_reload,
+    "/service_reload": _cmd_reload,
     "/update": _cmd_update,
     "/shutdown_now": _cmd_shutdown_now,
     "/restart_now": _cmd_restart_now,
