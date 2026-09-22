@@ -690,24 +690,14 @@ def takeover_requested() -> bool:
         return False
 
 
-def _is_project_listen(proc, project: str) -> bool:
-    try:
-        parts = [str(x) for x in (proc.cmdline() or [])]
-    except Exception:
-        return False
+def _is_listen_cmdline(parts: list[str], project: str) -> bool:
     if "listen" not in parts:
         return False
     if not any("main.py" in p.replace("\\", "/") for p in parts):
         return False
     proj = str(Path(project).resolve()).replace("\\", "/").rstrip("/").lower()
     joined = " ".join(parts).replace("\\", "/").lower()
-    if proj in joined:
-        return True
-    try:
-        cwd = str(Path(proc.cwd()).resolve()).replace("\\", "/").rstrip("/").lower()
-        return cwd == proj
-    except Exception:
-        return False
+    return (not proj) or proj in joined or joined.count("main.py") >= 1
 
 
 def _other_listener_pids() -> list[int]:
@@ -718,15 +708,19 @@ def _other_listener_pids() -> list[int]:
     me = os.getpid()
     project = str(_project_dir().resolve())
     pids = []
+    deadline = time.time() + 2.0
     try:
-        for proc in psutil.process_iter(["pid"]):
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            if time.time() > deadline:
+                break
             try:
                 pid = proc.info.get("pid")
                 if not pid or pid == me:
                     continue
-                if _is_project_listen(proc, project):
+                parts = [str(x) for x in (proc.info.get("cmdline") or [])]
+                if _is_listen_cmdline(parts, project):
                     pids.append(int(pid))
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
                 continue
     except (psutil.AccessDenied, PermissionError):
         return pids
@@ -737,21 +731,30 @@ def _pause_managed_listener() -> list[str]:
     """Dung process do OS giu, giu lich dang ky cho lan dang nhap sau."""
     notes = []
     system = _os()
-    if system == "Windows":
-        result = _schtasks(["/End", "/TN", "PCMonitorPro_Listener"])
-        if result.returncode == 0:
-            notes.append("Da dung task PCMonitorPro_Listener (lich van giu)")
-        return notes
-    if system == "Darwin":
-        _, domain = _macos_uid_domain()
-        result = _macos_launchctl(["bootout", f"{domain}/com.pcmonitor.listener"])
-        if result.returncode == 0:
-            notes.append("Da unload launchd listener trong phien nay")
-        return notes
-    if system == "Linux":
-        result = _systemctl(["stop", "pcmonitor-listener.service"])
-        if result.returncode == 0:
-            notes.append("Da stop systemd listener (van enable)")
+    try:
+        if system == "Windows":
+            result = _run(["schtasks", "/End", "/TN", "PCMonitorPro_Listener"], timeout=5)
+            if result.returncode == 0:
+                notes.append("Da dung task PCMonitorPro_Listener (lich van giu)")
+            return notes
+        if system == "Darwin":
+            _, domain = _macos_uid_domain()
+            result = _run(
+                ["launchctl", "bootout", f"{domain}/com.pcmonitor.listener"],
+                timeout=5,
+            )
+            if result.returncode == 0:
+                notes.append("Da unload launchd listener trong phien nay")
+            return notes
+        if system == "Linux":
+            result = _run(
+                ["systemctl", "--user", "stop", "pcmonitor-listener.service"],
+                timeout=5,
+            )
+            if result.returncode == 0:
+                notes.append("Da stop systemd listener (van enable)")
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        notes.append("Bo qua dung service cu (het thoi gian / thieu lenh)")
     return notes
 
 
@@ -786,7 +789,7 @@ def takeover_existing_listener() -> str:
                     os.kill(pid, signal.SIGTERM)
             except Exception:
                 pass
-        time.sleep(1.5)
+        time.sleep(0.4)
         for pid in list(pids):
             still = False
             if psutil:
@@ -799,7 +802,7 @@ def takeover_existing_listener() -> str:
                     still = False
             if still:
                 _force_kill(pid)
-        time.sleep(1.0)
+        time.sleep(0.3)
         notes.append("Da tat listen cu: " + ", ".join(f"PID {p}" for p in pids))
     else:
         notes.append("Khong thay listen cu")

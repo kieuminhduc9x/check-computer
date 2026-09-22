@@ -3,6 +3,7 @@ listener.py - Vong lap chinh: lang nghe lenh Telegram (long polling) va
 dong thoi tu kiem tra CPU/RAM de canh bao neu vuot nguong.
 """
 
+import sys
 import time
 import signal
 import threading
@@ -105,7 +106,8 @@ def _alert_watcher_loop() -> None:
 def _notify_service_ready() -> None:
     """Bao Telegram khi listener start — retry neu may moi boot, mang chua len.
     Bo qua neu task startup vua gui tin trong 2 phut (tranh 2 tin trung)."""
-    if telegram_api.boot_notify_recently_sent(120):
+    manual = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    if (not manual) and telegram_api.boot_notify_recently_sent(120):
         telegram_api.log("Bo qua thong bao ready: startup vua gui roi.")
         return
     text = commands.build_event_message("ready")
@@ -119,8 +121,12 @@ def _notify_service_ready() -> None:
 def run() -> None:
     config.validate()
     autostart.mark_listener_role()
-    takeover_note = autostart.takeover_existing_listener()
-    telegram_api.log(f"Ghi de listen cu (khong can admin): {takeover_note}")
+    telegram_api.log("Listener dang khoi dong...")
+    try:
+        takeover_note = autostart.takeover_existing_listener()
+        telegram_api.log(f"Ghi de listen cu: {takeover_note}")
+    except Exception as e:
+        telegram_api.log(f"Bo qua ghi de listen cu: {e}")
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )

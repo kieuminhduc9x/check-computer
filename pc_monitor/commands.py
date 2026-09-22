@@ -76,6 +76,7 @@ def build_help_text() -> str:
         "<b>Dieu khien</b>",
         f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
+        f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
         f"/shutdown_now — tat may, can xac nhan (ca khi khoa man hinh){_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/restart_now — khoi dong lai, can xac nhan{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/confirm_shutdown — xac nhan tat may{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
@@ -110,6 +111,8 @@ def telegram_menu_commands() -> list:
         items.append(("screenshot", "Chup man hinh"))
     if config.ENABLE_LOCK:
         items.append(("lock", "Khoa man hinh"))
+    if config.ENABLE_CLOSE_APPS:
+        items.append(("close_apps", "Tat het ung dung dang mo"))
     if config.ENABLE_SHUTDOWN_RESTART:
         items.append(("shutdown_now", "Tat may (can xac nhan)"))
         items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
@@ -192,6 +195,26 @@ def _cmd_lock(chat_id: str, args: str) -> None:
         return
     ok, msg = actions.lock_screen()
     telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
+
+
+def _cmd_close_apps(chat_id: str, args: str) -> None:
+    if not config.ENABLE_CLOSE_APPS:
+        telegram_api.send_message(chat_id, "Tinh nang tat app dang bi tat (ENABLE_CLOSE_APPS=false trong .env).")
+        return
+    apps = system_info.get_running_apps()
+    names = [str(a.get("name") or "") for a in apps if a.get("name")]
+    preview_raw = ", ".join(names[:12]) if names else "(khong liet ke duoc)"
+    preview = preview_raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    extra = f" va {len(names) - 12} app khac" if len(names) > 12 else ""
+    _request_confirmation(
+        chat_id, "close_apps",
+        "⚠️ Ban co chac muon <b>TAT HET UNG DUNG DANG MO</b>?\n"
+        "Giu lai desktop, listener, va cua so dang chay bot.\n"
+        f"Dang mo ({len(names)}): {preview}{extra}\n"
+        f"Nhan nut ben duoi, hoac gui /confirm_close_apps trong {CONFIRM_TIMEOUT_SECONDS} giay.",
+        "confirm_close_apps",
+        "Xac nhan TAT APP",
+    )
 
 
 def _cmd_note(chat_id: str, args: str) -> None:
@@ -338,6 +361,14 @@ def _cmd_confirm_restart(chat_id: str, args: str) -> None:
     _confirm(chat_id, "restart", actions.restart_now)
 
 
+def _cmd_confirm_close_apps(chat_id: str, args: str) -> None:
+    if not config.ENABLE_CLOSE_APPS:
+        telegram_api.send_message(chat_id, "Tinh nang tat app dang bi tat (ENABLE_CLOSE_APPS=false trong .env).")
+        return
+    telegram_api.send_chat_action(chat_id)
+    _confirm(chat_id, "close_apps", actions.close_all_apps)
+
+
 def handle_callback(chat_id: str, data: str) -> bool:
     """Xu ly nut bam inline. Tra ve True neu la callback cua bot."""
     if data == "confirm_shutdown":
@@ -346,9 +377,12 @@ def handle_callback(chat_id: str, data: str) -> bool:
     if data == "confirm_restart":
         _cmd_confirm_restart(chat_id, "")
         return True
+    if data == "confirm_close_apps":
+        _cmd_confirm_close_apps(chat_id, "")
+        return True
     if data == "cancel_power":
         _pending_confirmations.pop(chat_id, None)
-        telegram_api.send_message(chat_id, "Da huy lenh tat/khoi dong lai.")
+        telegram_api.send_message(chat_id, "Da huy lenh.")
         return True
     return False
 
@@ -369,6 +403,9 @@ COMMAND_TABLE = {
     "/ip": _cmd_ip,
     "/screenshot": _cmd_screenshot,
     "/lock": _cmd_lock,
+    "/close_apps": _cmd_close_apps,
+    "/closeall": _cmd_close_apps,
+    "/confirm_close_apps": _cmd_confirm_close_apps,
     "/note": _cmd_note,
     "/autostart": _cmd_autostart,
     "/autostart_off": _cmd_autostart_off,

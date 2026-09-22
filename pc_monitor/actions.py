@@ -278,6 +278,181 @@ def restart_now() -> tuple:
 
 # --------------------------------------- NOTE ---------------------------------
 
+# --------------------------------- CLOSE APPS --------------------------------
+
+_PROTECTED_NAMES = {
+    "Windows": {
+        "explorer.exe", "dwm.exe", "sihost.exe", "svchost.exe",
+        "searchhost.exe", "startmenuexperiencehost.exe",
+        "shellexperiencehost.exe", "textinputhost.exe",
+        "applicationframehost.exe", "runtimebroker.exe",
+        "securityhealthsystray.exe", "systemsettings.exe",
+        "lockapp.exe", "conhost.exe", "csrss.exe", "winlogon.exe",
+        "lsass.exe", "services.exe", "fontdrvhost.exe",
+        "taskmgr.exe", "ctfmon.exe",
+    },
+    "Darwin": {
+        "finder", "dock", "systemuiserver", "controlcenter",
+        "notificationcenter", "windowserver", "loginwindow",
+        "spotlight", "siri", "coreaudiod", "system events",
+        "wallpaper", "control center", "notification centre",
+    },
+    "Linux": {
+        "gnome-shell", "plasmashell", "kwin_x11", "kwin_wayland",
+        "xfce4-session", "xfce4-panel", "cinnamon", "muffin",
+        "xdg-desktop-portal", "xdg-desktop-portal-gtk",
+        "gsd-xsettings", "nautilus-desktop", "systemd",
+    },
+}
+
+
+def _protected_pids() -> set[int]:
+    """Listener + terminal dang chay no — khong tat de bot con tra loi."""
+    import psutil
+
+    pids = {os.getpid(), os.getppid()}
+    try:
+        proc = psutil.Process()
+        current = proc
+        for _ in range(6):
+            pids.add(current.pid)
+            parent = current.parent()
+            if parent is None:
+                break
+            current = parent
+    except Exception:
+        pass
+    project = str(config.PROJECT_ROOT.resolve()).replace("\\", "/").lower()
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmd = " ".join(str(x) for x in (proc.info.get("cmdline") or []))
+            except Exception:
+                continue
+            low = cmd.replace("\\", "/").lower()
+            if "main.py" in low and "listen" in low and project in low:
+                pids.add(int(proc.info["pid"]))
+    except Exception:
+        pass
+    return pids
+
+
+def _is_protected_app(name: str) -> bool:
+    key = (name or "").strip().lower()
+    if not key:
+        return True
+    protected = _PROTECTED_NAMES.get(_os(), set())
+    if key in protected:
+        return True
+    if key in ("python", "python.exe", "pythonw", "pythonw.exe", "python3", "python3.exe"):
+        return True
+    return False
+
+
+def _macos_quit_app(name: str) -> bool:
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'tell application "{escaped}" to quit'],
+            timeout=8, capture_output=True, text=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def close_all_apps() -> tuple:
+    """Tat cac ung dung giao dien dang mo. Giu desktop, listener, terminal cua bot."""
+    try:
+        return _close_all_apps()
+    except Exception as e:
+        return False, f"Loi khi tat ung dung: {e}"
+
+
+def _close_all_apps() -> tuple:
+    from . import system_info
+    import psutil
+
+    apps = system_info.get_running_apps()
+    keep = _protected_pids()
+    closed: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    seen_pids: set[int] = set()
+    system = _os()
+
+    if not apps:
+        return True, "Khong thay ung dung giao dien nao de tat."
+
+    for app in apps:
+        name = str(app.get("name") or "").strip()
+        if _is_protected_app(name):
+            skipped.append(name)
+            continue
+        pids = [int(p) for p in (app.get("pids") or []) if p]
+        if not pids and system == "Darwin":
+            try:
+                for proc in psutil.process_iter(["pid", "name"]):
+                    if (proc.info.get("name") or "") == name:
+                        pids.append(int(proc.info["pid"]))
+            except Exception:
+                pass
+        pids = [p for p in pids if p not in keep and p not in seen_pids]
+        if not pids and system != "Darwin":
+            skipped.append(name or "?")
+            continue
+
+        ok = False
+        if system == "Darwin":
+            ok = _macos_quit_app(name)
+        for pid in pids:
+            seen_pids.add(pid)
+            try:
+                proc = psutil.Process(pid)
+                if proc.pid in keep:
+                    continue
+                proc.terminate()
+                ok = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if ok:
+            closed.append(name)
+        else:
+            failed.append(name)
+
+    if seen_pids:
+        waiting = []
+        for pid in seen_pids:
+            try:
+                waiting.append(psutil.Process(pid))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if waiting:
+            _gone, alive = psutil.wait_procs(waiting, timeout=2)
+            for proc in alive:
+                if proc.pid in keep:
+                    continue
+                try:
+                    proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+    if not closed and not failed:
+        return True, (
+            "Khong tat app nao (chi con desktop / listener). "
+            + (f"Bo qua: {', '.join(skipped[:8])}." if skipped else "")
+        )
+
+    lines = [f"Da tat {len(closed)} ung dung."]
+    if closed:
+        lines.append(", ".join(closed[:20]) + ("…" if len(closed) > 20 else ""))
+    if skipped:
+        lines.append("Giu lai: " + ", ".join(skipped[:8]))
+    if failed:
+        lines.append("Khong tat duoc: " + ", ".join(failed[:8]))
+    return True, "\n".join(lines)
+
+
 def append_note(text: str) -> tuple:
     try:
         from datetime import datetime

@@ -390,9 +390,13 @@ def _get_visible_apps_windows() -> list:
                 app_name = psutil.Process(pid.value).name() or title
             except Exception:
                 pass
-            entry = grouped.setdefault(app_name, {"name": app_name, "frontmost": False, "windows": []})
+            entry = grouped.setdefault(
+                app_name, {"name": app_name, "frontmost": False, "windows": [], "pids": []}
+            )
             if title not in entry["windows"]:
                 entry["windows"].append(title)
+            if pid.value and pid.value not in entry["pids"]:
+                entry["pids"].append(pid.value)
             if fg_app and app_name == fg_app:
                 entry["frontmost"] = True
         except Exception:
@@ -513,9 +517,17 @@ def _get_visible_apps_linux() -> list:
             app_name = psutil.Process(int(pid_s)).name() or title
         except Exception:
             pass
-        entry = grouped.setdefault(app_name, {"name": app_name, "frontmost": False, "windows": []})
+        entry = grouped.setdefault(
+            app_name, {"name": app_name, "frontmost": False, "windows": [], "pids": []}
+        )
         if title not in entry["windows"]:
             entry["windows"].append(title)
+        try:
+            pid = int(pid_s)
+            if pid and pid not in entry["pids"]:
+                entry["pids"].append(pid)
+        except ValueError:
+            pass
         if front_title and title == front_title:
             entry["frontmost"] = True
     return list(grouped.values())

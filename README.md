@@ -51,7 +51,7 @@ pc-monitor-pro/
 | Bao trang thai (tu dong) | Bao khi BAT may, khi SAP TAT/khoi dong lai, heartbeat dinh ky |
 | Hoi truc tiep | `/status`, `/ping` — hoi la tra loi ngay (CPU/RAM, app dang mo), im lang = may dang tat |
 | Giam sat | `/apps`, `/cpu`, `/ram`, `/disk`, `/procs`, `/ip` |
-| Dieu khien | `/screenshot`, `/lock`, `/shutdown_now`, `/restart_now` (co xac nhan) |
+| Dieu khien | `/screenshot`, `/lock`, `/close_apps`, `/shutdown_now`, `/restart_now` (co xac nhan) |
 | Tien ich | `/note` — ghi chu; `/autostart` — dang ky chay khi khoi dong |
 | Canh bao chu dong | Tu bao khi CPU/RAM vuot nguong dat trong `.env` |
 | Bao mat | Chi tra loi cac `chat_id` nam trong danh sach cho phep |
@@ -248,6 +248,7 @@ sudo loginctl enable-linger $USER
 | `ALERT_CHECK_INTERVAL_SECONDS` | Khong | Khoang cach giua cac lan kiem tra CPU/RAM |
 | `ENABLE_SCREENSHOT` | Khong | Bat/tat lenh `/screenshot` |
 | `ENABLE_LOCK` | Khong | Bat/tat lenh `/lock` |
+| `ENABLE_CLOSE_APPS` | Khong | Bat/tat lenh `/close_apps` |
 | `ENABLE_SHUTDOWN_RESTART` | Khong | Bat/tat lenh `/shutdown_now`, `/restart_now` |
 | `ENABLE_NOTE` | Khong | Bat/tat lenh `/note` |
 | `ENABLE_AUTOSTART` | Khong | Bat/tat lenh `/autostart`, `/autostart_off`, `/service` |
@@ -268,6 +269,7 @@ Gui cac lenh nay cho bot cua ban tren Telegram:
 | `/ip` | IP noi bo (LAN) va IP cong khai |
 | `/screenshot` | Chup va gui anh man hinh hien tai |
 | `/lock` | Khoa man hinh may ngay lap tuc |
+| `/close_apps` | Tat het ung dung giao dien dang mo — can xac nhan. Giu desktop, listener, cua so dang chay bot |
 | `/shutdown_now` | Yeu cau tat may — nhan nut xac nhan hoac `/confirm_shutdown` trong 30s. Van chay khi man hinh dang khoa (force) |
 | `/restart_now` | Yeu cau khoi dong lai — nhan nut xac nhan hoac `/confirm_restart` trong 30s. Van chay khi man hinh dang khoa |
 | `/note noi dung` | Luu 1 dong ghi chu vao file `notes.txt` tren may |
