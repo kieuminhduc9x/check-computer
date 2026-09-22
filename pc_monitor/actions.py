@@ -21,18 +21,52 @@ def _os() -> str:
 def take_screenshot() -> tuple:
     """Chup man hinh, luu vao config.SCREENSHOT_TMP.
     Tra ve (True, duong_dan) hoac (False, thong_bao_loi)."""
+    system = _os()
     try:
         import mss
         import mss.tools
 
         with mss.mss() as sct:
-            # Chup man hinh dau tien (monitor[1]; monitor[0] la "toan bo cac man hinh gop lai")
+            if len(sct.monitors) < 2 and system != "Windows":
+                return False, (
+                    "Khong thay man hinh de chup. "
+                    "Tren Linux can phien do hoa (X11/Wayland) dang dang nhap. "
+                    "Tren macOS can cap Screen Recording cho Python/Terminal."
+                )
             monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
             shot = sct.grab(monitor)
             mss.tools.to_png(shot.rgb, shot.size, output=str(config.SCREENSHOT_TMP))
-        return True, str(config.SCREENSHOT_TMP)
+
+        path = Path(config.SCREENSHOT_TMP)
+        if not path.exists() or path.stat().st_size < 100:
+            return False, "Chup xong nhung file anh rong — co the man hinh dang khoa hoac service khong thay desktop."
+
+        # Telegram sendPhoto gioi han ~10MB; nen anh lon.
+        try:
+            from PIL import Image
+            if path.stat().st_size > 3 * 1024 * 1024:
+                img = Image.open(path)
+                img = img.convert("RGB")
+                img.save(path, "JPEG", quality=70, optimize=True)
+        except Exception:
+            pass
+        return True, str(path)
     except Exception as e:
-        return False, f"Khong chup duoc man hinh: {e}"
+        hint = ""
+        err = str(e).lower()
+        if system == "Darwin" or "screen" in err or "permission" in err:
+            hint = (
+                " Tren macOS: System Settings -> Privacy & Security -> "
+                "Screen Recording, bat cho Terminal/Python, roi mo lai listener."
+            )
+        elif system == "Linux":
+            hint = " Tren Linux: can dang nhap desktop (X11/Wayland), khong dung duoc tren server khong man hinh."
+        elif system == "Windows":
+            hint = (
+                " Tren Windows: mo khoa man hinh. Neu bot chay bang Task Scheduler "
+                "ma van loi, thu chay tay: python main.py listen trong phien dang nhap."
+            )
+        return False, f"Khong chup duoc man hinh: {e}.{hint}"
 
 
 # ------------------------------------ LOCK ------------------------------------

@@ -120,7 +120,7 @@ def telegram_menu_commands() -> list:
     if config.ENABLE_AUTOSTART:
         items.append(("autostart", "Dang ky chay khi khoi dong may"))
         items.append(("autostart_off", "Go bo service khoi dong"))
-        items.append(("service", "Trang thai service khoi dong"))
+    items.append(("service", "Trang thai service khoi dong"))
     items.append(("help", "Danh sach toan bo lenh"))
     return [{"command": name, "description": desc} for name, desc in items]
 
@@ -175,7 +175,13 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id, "upload_photo")
     ok, result = actions.take_screenshot()
     if ok:
-        telegram_api.send_photo(chat_id, result, caption="📸 Man hinh hien tai")
+        sent = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
+        if not sent:
+            telegram_api.send_message(
+                chat_id,
+                "❌ Da chup anh nhung khong gui duoc len Telegram "
+                "(file qua lon / mat mang). Xem pc_monitor.log tren may.",
+            )
     else:
         telegram_api.send_message(chat_id, f"❌ {result}")
 
@@ -237,10 +243,21 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
 
 
 def _cmd_service(chat_id: str, args: str) -> None:
-    if not config.ENABLE_AUTOSTART:
-        telegram_api.send_message(chat_id, "Tinh nang dang ky service dang bi tat (ENABLE_AUTOSTART=false trong .env).")
+    telegram_api.send_chat_action(chat_id)
+    try:
+        text = autostart.status_text()
+    except Exception as e:
+        safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        telegram_api.send_message(chat_id, f"❌ Khong doc duoc trang thai service.\n{safe}")
         return
-    telegram_api.send_message(chat_id, autostart.status_text())
+    sent = telegram_api.send_message(chat_id, text)
+    if not sent:
+        telegram_api.send_message(
+            chat_id,
+            "Khong gui duoc chi tiet /service (tin qua dai hoac HTML loi). "
+            "Tren may chay: python main.py service",
+            parse_mode="",
+        )
 
 
 def _power_lock_line() -> str:

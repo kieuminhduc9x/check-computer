@@ -162,19 +162,22 @@ def _uninstall_macos() -> tuple[bool, str]:
     return True, "\n".join(lines)
 
 
+def _html(text: str) -> str:
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _status_macos() -> str:
-    listed = _macos_launchctl(["list"])
-    blob = listed.stdout or ""
+    _, domain = _macos_uid_domain()
     lines = ["macOS launchd:"]
     for name in MAC_LABELS:
         label = f"com.pcmonitor.{name}"
         dest = _macos_plist_path(name)
-        registered = dest.exists()
-        loaded = label in blob
+        printed = _macos_launchctl(["print", f"{domain}/{label}"])
+        loaded = printed.returncode == 0
         state = []
         if loaded:
             state.append("dang nap")
-        if registered:
+        if dest.exists():
             state.append("co file")
         else:
             state.append("chua dang ky")
@@ -674,6 +677,35 @@ def uninstall() -> tuple[bool, str]:
         return False, f"Loi khi go service: {e}"
 
 
+def is_listener_running() -> tuple[bool, str]:
+    """Process 'main.py listen' co dang chay khong (khac voi da dang ky autostart)."""
+    if running_as_listener():
+        return True, f"Dang chay trong process nay (PID {os.getpid()})"
+    try:
+        import psutil
+    except ImportError:
+        return False, "Khong kiem tra duoc (thieu psutil)"
+
+    project = str(_project_dir().resolve())
+    hits = []
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmd = proc.info.get("cmdline") or []
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            joined = " ".join(str(x) for x in cmd)
+            if "main.py" in joined and "listen" in joined:
+                if project.replace("\\", "/").lower() in joined.replace("\\", "/").lower() or len(hits) == 0:
+                    hits.append(f"PID {proc.info.get('pid')}")
+    except (psutil.AccessDenied, PermissionError):
+        return False, "Khong du quyen doc danh sach process"
+
+    if hits:
+        return True, "Process listen: " + ", ".join(hits[:5])
+    return False, "Khong thay process main.py listen"
+
+
 def _is_autostart_registered() -> tuple[bool, str]:
     """Listener co duoc dang ky chay luc dang nhap khong."""
     system = _os()
@@ -706,19 +738,46 @@ def status_text() -> str:
         ok, detail = _is_autostart_registered()
     except Exception as e:
         ok, detail = False, str(e)
+    try:
+        live, live_detail = is_listener_running()
+    except Exception as e:
+        live, live_detail = False, str(e)
+
     if ok:
-        verdict = f"✅ <b>DA DANG KY AUTOSTART</b>\n{detail}"
+        verdict = f"✅ <b>DA DANG KY AUTOSTART</b>\n{_html(detail)}"
     else:
         verdict = (
-            f"❌ <b>CHUA DANG KY AUTOSTART</b>\n{detail}\n"
-            "Chay: python main.py install  hoac gui /autostart"
+            f"❌ <b>CHUA DANG KY AUTOSTART</b>\n{_html(detail)}\n"
+            "Listen tay khac service. Gui /autostart (hoac tren may: "
+            "<code>python main.py install</code>) de lan sau dang nhap tu chay."
+        )
+    if live:
+        listen_line = f"✅ <b>LISTEN DANG CHAY</b>\n{_html(live_detail)}"
+    else:
+        listen_line = (
+            f"❌ <b>LISTEN KHONG CHAY</b>\n{_html(live_detail)}\n"
+            "Autostart moi la lich. Can dang nhap Windows/macOS, "
+            "hoac chay: <code>python main.py listen</code>"
+        )
+    hint = ""
+    if live and not ok:
+        hint = (
+            "\n➡️ <b>Dang chay bang tay</b> (python main.py listen), "
+            "chua co service khoi dong. Gui /autostart de dang ky.\n"
+        )
+    elif not live and ok:
+        hint = (
+            "\n➡️ Service da dang ky nhung process chua chay. "
+            "Dang nhap lai may, hoac chay <code>python main.py listen</code>.\n"
         )
     header = (
         f"⚙️ <b>SERVICE KHOI DONG</b>\n"
         f"{verdict}\n"
-        f"May: {config.COMPUTER_NAME}\n"
-        f"He dieu hanh: {system}\n"
-        f"Python: {_python_bin()}\n"
+        f"{listen_line}\n"
+        f"{hint}"
+        f"May: {_html(config.COMPUTER_NAME)}\n"
+        f"He dieu hanh: {_html(system)}\n"
+        f"Python: <code>{_html(_python_bin())}</code>\n"
     )
     try:
         if system == "Darwin":
@@ -731,7 +790,10 @@ def status_text() -> str:
             body = "He dieu hanh chua duoc ho tro."
     except Exception as e:
         body = f"Khong doc duoc trang thai: {e}"
-    return header + "\n" + body
+    text = header + "\n" + _html(body)
+    if len(text) > 3500:
+        text = text[:3490] + "\n…"
+    return text
 
 
 def run_cli(action: str) -> None:
@@ -742,7 +804,13 @@ def run_cli(action: str) -> None:
     elif action == "uninstall":
         ok, msg = uninstall()
     elif action in ("service", "autostart_status"):
-        print(status_text().replace("<b>", "").replace("</b>", ""))
+        print(
+            status_text()
+            .replace("<b>", "")
+            .replace("</b>", "")
+            .replace("<code>", "")
+            .replace("</code>", "")
+        )
         sys.exit(0)
     else:
         print(f"Lenh service khong hop le: {action}")
