@@ -15,6 +15,7 @@ from . import system_info
 from . import actions
 from . import telegram_api
 from . import autostart
+from . import vpn
 
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
@@ -80,6 +81,9 @@ def build_help_text() -> str:
         f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
         f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
+        f"/vpn — danh sach profile Pritunl, nut bat/tat{_disabled_suffix(config.ENABLE_VPN)}",
+        f"/vpn_on — bat tat ca profile chua ket noi{_disabled_suffix(config.ENABLE_VPN)}",
+        f"/vpn_off — tat tat ca profile dang ket noi{_disabled_suffix(config.ENABLE_VPN)}",
         f"/shutdown_now — tat may, can xac nhan (ca khi khoa man hinh){_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/restart_now — khoi dong lai, can xac nhan{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/confirm_shutdown — xac nhan tat may{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
@@ -116,6 +120,10 @@ def telegram_menu_commands() -> list:
         items.append(("lock", "Khoa man hinh"))
     if config.ENABLE_CLOSE_APPS:
         items.append(("close_apps", "Tat het ung dung dang mo"))
+    if config.ENABLE_VPN:
+        items.append(("vpn", "Danh sach / bat tat Pritunl VPN"))
+        items.append(("vpn_on", "Bat tat ca profile Pritunl"))
+        items.append(("vpn_off", "Tat tat ca profile Pritunl"))
     if config.ENABLE_SHUTDOWN_RESTART:
         items.append(("shutdown_now", "Tat may (can xac nhan)"))
         items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
@@ -430,6 +438,80 @@ def _cmd_confirm_close_apps(chat_id: str, args: str) -> None:
     _confirm(chat_id, "close_apps", actions.close_all_apps)
 
 
+def _vpn_guard(chat_id: str) -> bool:
+    if not config.ENABLE_VPN:
+        telegram_api.send_message(chat_id, "Tinh nang VPN dang bi tat (ENABLE_VPN=false trong .env).")
+        return False
+    return True
+
+
+def _cmd_vpn(chat_id: str, args: str) -> None:
+    if not _vpn_guard(chat_id):
+        return
+    arg = args.strip().lower()
+    if arg in ("on", "start", "up"):
+        _cmd_vpn_on(chat_id, "")
+        return
+    if arg in ("off", "stop", "down"):
+        _cmd_vpn_off(chat_id, "")
+        return
+    telegram_api.send_chat_action(chat_id)
+    ok, err, profiles = vpn.list_profiles()
+    if not ok:
+        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
+        return
+    telegram_api.send_message(
+        chat_id,
+        vpn.format_list_text(profiles),
+        reply_markup=vpn.list_keyboard(profiles),
+    )
+
+
+def _cmd_vpn_on(chat_id: str, args: str) -> None:
+    if not _vpn_guard(chat_id):
+        return
+    telegram_api.send_chat_action(chat_id)
+    query = args.strip()
+    if not query or query.lower() in ("all", "tatca", "*"):
+        ok, msg = vpn.start_all()
+        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+        return
+    ok, err, profiles = vpn.list_profiles()
+    if not ok:
+        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
+        return
+    profile = vpn.match_profile(query, profiles)
+    if not profile:
+        telegram_api.send_message(
+            chat_id,
+            "Khong khop profile nao. Gui /vpn de xem danh sach.",
+        )
+        return
+    started, msg = vpn.start_profile(profile["id"])
+    telegram_api.send_message(chat_id, ("✅ " if started else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+
+def _cmd_vpn_off(chat_id: str, args: str) -> None:
+    if not _vpn_guard(chat_id):
+        return
+    telegram_api.send_chat_action(chat_id)
+    query = args.strip()
+    if not query or query.lower() in ("all", "tatca", "*"):
+        ok, msg = vpn.stop_all()
+        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+        return
+    ok, err, profiles = vpn.list_profiles()
+    if not ok:
+        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
+        return
+    profile = vpn.match_profile(query, profiles)
+    if not profile:
+        telegram_api.send_message(chat_id, "Khong khop profile nao. Gui /vpn de xem danh sach.")
+        return
+    stopped, msg = vpn.stop_profile(profile["id"])
+    telegram_api.send_message(chat_id, ("✅ " if stopped else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+
 def handle_callback(chat_id: str, data: str) -> bool:
     """Xu ly nut bam inline. Tra ve True neu la callback cua bot."""
     if data == "confirm_shutdown":
@@ -444,6 +526,18 @@ def handle_callback(chat_id: str, data: str) -> bool:
     if data == "cancel_power":
         _pending_confirmations.pop(chat_id, None)
         telegram_api.send_message(chat_id, "Da huy lenh.")
+        return True
+    if data == "vpn_on_all":
+        _cmd_vpn_on(chat_id, "all")
+        return True
+    if data == "vpn_off_all":
+        _cmd_vpn_off(chat_id, "all")
+        return True
+    if data.startswith("vpn_on:"):
+        _cmd_vpn_on(chat_id, data.split(":", 1)[1])
+        return True
+    if data.startswith("vpn_off:"):
+        _cmd_vpn_off(chat_id, data.split(":", 1)[1])
         return True
     return False
 
@@ -467,6 +561,10 @@ COMMAND_TABLE = {
     "/close_apps": _cmd_close_apps,
     "/closeall": _cmd_close_apps,
     "/confirm_close_apps": _cmd_confirm_close_apps,
+    "/vpn": _cmd_vpn,
+    "/vpn_list": _cmd_vpn,
+    "/vpn_on": _cmd_vpn_on,
+    "/vpn_off": _cmd_vpn_off,
     "/note": _cmd_note,
     "/autostart": _cmd_autostart,
     "/autostart_off": _cmd_autostart_off,

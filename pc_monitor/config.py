@@ -65,6 +65,7 @@ ENABLE_SHUTDOWN_RESTART = _get_bool("ENABLE_SHUTDOWN_RESTART", True)
 ENABLE_NOTE = _get_bool("ENABLE_NOTE", True)
 ENABLE_AUTOSTART = _get_bool("ENABLE_AUTOSTART", True)
 ENABLE_CLOSE_APPS = _get_bool("ENABLE_CLOSE_APPS", True)
+ENABLE_VPN = _get_bool("ENABLE_VPN", True)
 
 NOTE_FILE = PROJECT_ROOT / os.getenv("NOTE_FILE", "notes.txt")
 LOG_FILE = PROJECT_ROOT / "pc_monitor.log"
