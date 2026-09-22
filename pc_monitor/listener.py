@@ -228,8 +228,8 @@ def run() -> None:
             time.sleep(RETRY_SLEEP_SEC)
             continue
 
-        if not result.get("ok"):
-            desc = str(result.get("description") or result)
+        if not isinstance(result, dict) or not result.get("ok"):
+            desc = str((result or {}).get("description") if isinstance(result, dict) else result)
             if "terminated by other getUpdates" in desc or "Conflict" in desc:
                 telegram_api.log(
                     "Telegram Conflict: con listen khac cung BOT_TOKEN "
@@ -242,56 +242,56 @@ def run() -> None:
             continue
 
         for update in result.get("result", []):
-            offset = update["update_id"] + 1
-            _save_offset(offset)
-
-            callback = update.get("callback_query")
-            if callback:
-                cq_id = str(callback.get("id", ""))
-                msg = callback.get("message") or {}
-                chat = msg.get("chat") or callback.get("from") or {}
-                chat_id = str(chat.get("id", ""))
-                data = str(callback.get("data") or "")
-                telegram_api.answer_callback_query(cq_id)
-                if chat_id not in config.ALLOWED_CHAT_IDS:
-                    telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
-                    continue
-                try:
-                    commands.handle_callback(chat_id, data)
-                except Exception as e:
-                    telegram_api.log(f"Loi callback {data}: {e}")
-                continue
-
-            message = update.get("message") or {}
-            chat = message.get("chat") or {}
-            text = (message.get("text") or "").strip()
-            chat_id = str(chat.get("id", ""))
-
-            if chat_id not in config.ALLOWED_CHAT_IDS:
-                telegram_api.log(f"Bo qua tin nhan tu chat_id khong duoc phep: {chat_id}")
-                continue
-
-            if not text:
-                continue
-
             try:
-                handled = commands.dispatch(chat_id, text)
-            except Exception as e:
-                telegram_api.log(f"Loi khi xu ly lenh tu {chat_id}: {text!r} -> {e}")
-                safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                cmd = text.split()[0].replace("<", "").replace(">", "")
-                telegram_api.send_message(
-                    chat_id,
-                    f"❌ Loi khi xu ly lenh <code>{cmd}</code>.\n"
-                    f"Chi tiet: {safe}\n"
-                    "Xem them file pc_monitor.log tren may.",
-                )
-                continue
+                offset = update["update_id"] + 1
+                _save_offset(offset)
 
-            if not handled:
-                telegram_api.log(f"Lenh khong xac dinh tu {chat_id}: {text}")
-                if text.startswith("/"):
-                    telegram_api.send_message(
+                callback = update.get("callback_query")
+                if callback:
+                    cq_id = str(callback.get("id", ""))
+                    msg = callback.get("message") or {}
+                    chat = msg.get("chat") or callback.get("from") or {}
+                    chat_id = str(chat.get("id", ""))
+                    data = str(callback.get("data") or "")
+                    telegram_api.answer_callback_query(cq_id)
+                    if chat_id not in config.ALLOWED_CHAT_IDS:
+                        telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
+                        continue
+                    commands.handle_callback(chat_id, data)
+                    continue
+
+                message = update.get("message") or {}
+                chat = message.get("chat") or {}
+                text = (message.get("text") or "").strip()
+                chat_id = str(chat.get("id", ""))
+
+                if chat_id not in config.ALLOWED_CHAT_IDS:
+                    telegram_api.log(f"Bo qua tin nhan tu chat_id khong duoc phep: {chat_id}")
+                    continue
+
+                if not text:
+                    continue
+
+                handled = commands.dispatch(chat_id, text)
+                if not handled:
+                    telegram_api.log(f"Lenh khong xac dinh tu {chat_id}: {text}")
+                    if text.startswith("/"):
+                        telegram_api.reply(
+                            chat_id,
+                            "Khong hieu lenh nay.\n\n" + commands.build_help_text(),
+                            parse_mode="HTML",
+                        )
+            except Exception as e:
+                telegram_api.log(f"Loi khi xu ly update: {e}")
+                chat_id = ""
+                try:
+                    msg = (update.get("callback_query") or {}).get("message") or update.get("message") or {}
+                    chat_id = str((msg.get("chat") or {}).get("id") or "")
+                except Exception:
+                    chat_id = ""
+                if chat_id:
+                    telegram_api.reply(
                         chat_id,
-                        "Khong hieu lenh nay.\n\n" + commands.build_help_text(),
+                        f"Loi khi xu ly lenh: {e}\nListen van dang chay.",
+                        parse_mode="",
                     )

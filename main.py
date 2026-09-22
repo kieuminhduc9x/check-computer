@@ -79,6 +79,10 @@ if __name__ == "__main__":
     except Exception as e:
         try:
             telegram_api.log(f"Crash: {e}")
+            telegram_api.send_to_all(
+                f"Listen crash: {e}\nHay chay lai python main.py listen (hoac start-project).",
+                parse_mode="",
+            )
         except Exception:
             print(f"Crash: {e}", flush=True)
         raise

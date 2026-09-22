@@ -23,6 +23,27 @@ _pending_confirmations = {}
 CONFIRM_TIMEOUT_SECONDS = 30
 
 
+def _reply(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+    return telegram_api.reply(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
+def _bg(chat_id: str, label: str, fn) -> None:
+    """Chay lenh lau trong thread; loi van gui Telegram, khong crash listen."""
+
+    def _run() -> None:
+        try:
+            fn()
+        except Exception as e:
+            telegram_api.log(f"{label}: {e}")
+            telegram_api.reply(
+                chat_id,
+                f"Loi {label}: {e}\nListen van dang chay.",
+                parse_mode="",
+            )
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 # --------------------------- Noi dung tin nhan dung chung ---------------------
 
 def build_event_message(event: str) -> str:
@@ -150,43 +171,67 @@ def telegram_menu_commands() -> list:
 
 def _cmd_status(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id)
-    telegram_api.send_message(chat_id, build_status_text())
+    try:
+        telegram_api.send_message(chat_id, build_status_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /status: {e}", parse_mode="")
 
 
 def _cmd_help(chat_id: str, args: str) -> None:
-    telegram_api.send_message(chat_id, build_help_text())
+    try:
+        telegram_api.send_message(chat_id, build_help_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /help: {e}", parse_mode="")
 
 
 def _cmd_cpu(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id)
-    telegram_api.send_message(chat_id, system_info.get_cpu_text())
+    try:
+        telegram_api.send_message(chat_id, system_info.get_cpu_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /cpu: {e}", parse_mode="")
 
 
 def _cmd_ram(chat_id: str, args: str) -> None:
-    telegram_api.send_message(chat_id, system_info.get_ram_text())
+    try:
+        telegram_api.send_message(chat_id, system_info.get_ram_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /ram: {e}", parse_mode="")
 
 
 def _cmd_disk(chat_id: str, args: str) -> None:
-    telegram_api.send_message(chat_id, system_info.get_disk_text())
+    try:
+        telegram_api.send_message(chat_id, system_info.get_disk_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /disk: {e}", parse_mode="")
 
 
 def _cmd_procs(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id)
-    telegram_api.send_message(chat_id, system_info.get_top_processes_text())
+    try:
+        telegram_api.send_message(chat_id, system_info.get_top_processes_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /procs: {e}", parse_mode="")
 
 
 def _cmd_apps(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id)
-    telegram_api.send_message(chat_id, system_info.get_running_apps_text())
+    try:
+        telegram_api.send_message(chat_id, system_info.get_running_apps_text())
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /apps: {e}", parse_mode="")
 
 
 def _cmd_ip(chat_id: str, args: str) -> None:
-    local_ip = system_info.get_local_ip()
-    public_ip = system_info.get_public_ip()
-    telegram_api.send_message(
-        chat_id,
-        f"🌐 <b>DIA CHI IP</b>\nNoi bo (LAN): {local_ip}\nCong khai: {public_ip}",
-    )
+    try:
+        local_ip = system_info.get_local_ip()
+        public_ip = system_info.get_public_ip()
+        telegram_api.send_message(
+            chat_id,
+            f"🌐 <b>DIA CHI IP</b>\nNoi bo (LAN): {local_ip}\nCong khai: {public_ip}",
+        )
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /ip: {e}", parse_mode="")
 
 
 def _cmd_screenshot(chat_id: str, args: str) -> None:
@@ -194,32 +239,43 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
         telegram_api.send_message(chat_id, "Tinh nang screenshot dang bi tat (ENABLE_SCREENSHOT=false trong .env).")
         return
     telegram_api.send_chat_action(chat_id, "upload_photo")
-    ok, result = actions.take_screenshot()
+    try:
+        ok, result = actions.take_screenshot()
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /screenshot: {e}", parse_mode="")
+        return
     if ok:
         sent = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
         if not sent:
-            telegram_api.send_message(
+            telegram_api.reply(
                 chat_id,
-                "❌ Da chup anh nhung khong gui duoc len Telegram "
-                "(file qua lon / mat mang). Xem pc_monitor.log tren may.",
+                "Da chup anh nhung khong gui duoc len Telegram (file qua lon / mat mang). Xem pc_monitor.log tren may.",
+                parse_mode="",
             )
     else:
-        telegram_api.send_message(chat_id, f"❌ {result}")
+        telegram_api.reply(chat_id, f"Loi. {result}", parse_mode="")
 
 
 def _cmd_lock(chat_id: str, args: str) -> None:
     if not config.ENABLE_LOCK:
         telegram_api.send_message(chat_id, "Tinh nang khoa man hinh dang bi tat (ENABLE_LOCK=false trong .env).")
         return
-    ok, msg = actions.lock_screen()
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
+    try:
+        ok, msg = actions.lock_screen()
+        telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /lock: {e}", parse_mode="")
 
 
 def _cmd_close_apps(chat_id: str, args: str) -> None:
     if not config.ENABLE_CLOSE_APPS:
         telegram_api.send_message(chat_id, "Tinh nang tat app dang bi tat (ENABLE_CLOSE_APPS=false trong .env).")
         return
-    apps = system_info.get_running_apps()
+    try:
+        apps = system_info.get_running_apps()
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /close_apps khi liet ke app: {e}", parse_mode="")
+        return
     names = [str(a.get("name") or "") for a in apps if a.get("name")]
     preview_raw = ", ".join(names[:12]) if names else "(khong liet ke duoc)"
     preview = preview_raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -242,8 +298,11 @@ def _cmd_note(chat_id: str, args: str) -> None:
     if not args.strip():
         telegram_api.send_message(chat_id, "Dung: /note noi dung ghi chu")
         return
-    ok, msg = actions.append_note(args.strip())
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
+    try:
+        ok, msg = actions.append_note(args.strip())
+        telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /note: {e}", parse_mode="")
 
 
 def _cmd_autostart(chat_id: str, args: str) -> None:
@@ -296,7 +355,7 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
             ("✅ " if ok else "❌ ") + prefix + msg.replace("&", "&amp;").replace("<", "&lt;"),
         )
 
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(chat_id, "/autostart", _run)
 
 
 def _cmd_autostart_off(chat_id: str, args: str) -> None:
@@ -309,8 +368,11 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
             "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
             "Hay bam <b>Yes</b> de go Task Scheduler.",
         )
-    ok, msg = autostart.uninstall()
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+    try:
+        ok, msg = autostart.uninstall()
+        telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /autostart_off: {e}", parse_mode="")
 
 
 def _cmd_reload(chat_id: str, args: str) -> None:
@@ -324,7 +386,7 @@ def _cmd_reload(chat_id: str, args: str) -> None:
     def _run() -> None:
         updater.spawn_new_listener(kind="reload")
 
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(chat_id, "/reload", _run)
 
 
 def _cmd_service(chat_id: str, args: str) -> None:
@@ -379,11 +441,14 @@ def _cmd_update(chat_id: str, args: str) -> None:
             time.sleep(0.5)
             updater.spawn_new_listener()
 
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(chat_id, "/update", _run)
 
 
 def _power_lock_line() -> str:
-    locked = system_info.is_screen_locked()
+    try:
+        locked = system_info.is_screen_locked()
+    except Exception:
+        locked = None
     if locked is True:
         return "Man hinh: <b>dang khoa</b> — van tat/restart duoc (force, khong cho app hoi)."
     if locked is False:
@@ -456,8 +521,12 @@ def _cmd_restart_now(chat_id: str, args: str) -> None:
 
 def _run_restart(chat_id: str) -> None:
     _pending_confirmations.pop(chat_id, None)
-    ok, msg = actions.restart_now()
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
+    try:
+        ok, msg = actions.restart_now()
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi restart: {e}", parse_mode="")
+        return
+    telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
 
 
 def _confirm(chat_id: str, expected_action: str, execute_fn) -> None:
@@ -471,8 +540,12 @@ def _confirm(chat_id: str, expected_action: str, execute_fn) -> None:
         return
 
     del _pending_confirmations[chat_id]
-    ok, msg = execute_fn()
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
+    try:
+        ok, msg = execute_fn()
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi khi thuc hien {expected_action}: {e}", parse_mode="")
+        return
+    telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + str(msg), parse_mode="")
 
 
 def _cmd_confirm_shutdown(chat_id: str, args: str) -> None:
@@ -528,82 +601,99 @@ def _cmd_vpn(chat_id: str, args: str) -> None:
         if not sent:
             telegram_api.send_message(chat_id, vpn.format_list_text(profiles), parse_mode="")
 
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(chat_id, "/vpn", _run)
 
 
 def _cmd_vpn_on(chat_id: str, args: str) -> None:
     if not _vpn_guard(chat_id):
         return
     telegram_api.send_chat_action(chat_id)
+    telegram_api.reply(chat_id, "Dang bat VPN...", parse_mode="")
     query = args.strip()
-    if not query or query.lower() in ("all", "tatca", "*"):
-        ok, msg = vpn.start_all()
-        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
-        return
-    ok, err, profiles = vpn.list_profiles()
-    if not ok:
-        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
-        return
-    profile = vpn.match_profile(query, profiles)
-    if not profile:
-        telegram_api.send_message(
-            chat_id,
-            "Khong khop profile nao. Gui /vpn de xem danh sach.",
-        )
-        return
-    started, msg = vpn.start_profile(profile["id"])
-    telegram_api.send_message(chat_id, ("✅ " if started else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+    def _run() -> None:
+        if not query or query.lower() in ("all", "tatca", "*"):
+            ok, msg = vpn.start_all()
+            telegram_api.reply(
+                chat_id,
+                ("OK. " if ok else "Loi. ") + msg,
+                parse_mode="",
+            )
+            return
+        ok, err, profiles = vpn.list_profiles()
+        if not ok:
+            telegram_api.reply(chat_id, "Loi. " + err, parse_mode="")
+            return
+        profile = vpn.match_profile(query, profiles)
+        if not profile:
+            telegram_api.reply(chat_id, "Khong khop profile nao. Gui /vpn de xem danh sach.", parse_mode="")
+            return
+        started, msg = vpn.start_profile(profile["id"])
+        telegram_api.reply(chat_id, ("OK. " if started else "Loi. ") + msg, parse_mode="")
+
+    _bg(chat_id, "/vpn_on", _run)
 
 
 def _cmd_vpn_off(chat_id: str, args: str) -> None:
     if not _vpn_guard(chat_id):
         return
     telegram_api.send_chat_action(chat_id)
+    telegram_api.reply(chat_id, "Dang tat VPN...", parse_mode="")
     query = args.strip()
-    if not query or query.lower() in ("all", "tatca", "*"):
-        ok, msg = vpn.stop_all()
-        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
-        return
-    ok, err, profiles = vpn.list_profiles()
-    if not ok:
-        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
-        return
-    profile = vpn.match_profile(query, profiles)
-    if not profile:
-        telegram_api.send_message(chat_id, "Khong khop profile nao. Gui /vpn de xem danh sach.")
-        return
-    stopped, msg = vpn.stop_profile(profile["id"])
-    telegram_api.send_message(chat_id, ("✅ " if stopped else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+
+    def _run() -> None:
+        if not query or query.lower() in ("all", "tatca", "*"):
+            ok, msg = vpn.stop_all()
+            telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
+            return
+        ok, err, profiles = vpn.list_profiles()
+        if not ok:
+            telegram_api.reply(chat_id, "Loi. " + err, parse_mode="")
+            return
+        profile = vpn.match_profile(query, profiles)
+        if not profile:
+            telegram_api.reply(chat_id, "Khong khop profile nao. Gui /vpn de xem danh sach.", parse_mode="")
+            return
+        stopped, msg = vpn.stop_profile(profile["id"])
+        telegram_api.reply(chat_id, ("OK. " if stopped else "Loi. ") + msg, parse_mode="")
+
+    _bg(chat_id, "/vpn_off", _run)
 
 
 def handle_callback(chat_id: str, data: str) -> bool:
     """Xu ly nut bam inline. Tra ve True neu la callback cua bot."""
-    if data == "confirm_shutdown":
-        _cmd_confirm_shutdown(chat_id, "")
+    try:
+        if data == "confirm_shutdown":
+            _cmd_confirm_shutdown(chat_id, "")
+            return True
+        if data == "confirm_restart":
+            _cmd_confirm_restart(chat_id, "")
+            return True
+        if data == "confirm_close_apps":
+            _cmd_confirm_close_apps(chat_id, "")
+            return True
+        if data == "cancel_power":
+            _pending_confirmations.pop(chat_id, None)
+            telegram_api.reply(chat_id, "Da huy lenh.", parse_mode="")
+            return True
+        if data == "vpn_on_all":
+            _cmd_vpn_on(chat_id, "all")
+            return True
+        if data == "vpn_off_all":
+            _cmd_vpn_off(chat_id, "all")
+            return True
+        if data.startswith("vpn_on:"):
+            _cmd_vpn_on(chat_id, data.split(":", 1)[1])
+            return True
+        if data.startswith("vpn_off:"):
+            _cmd_vpn_off(chat_id, data.split(":", 1)[1])
+            return True
+        telegram_api.reply(chat_id, f"Khong hieu nut bam: {data}", parse_mode="")
         return True
-    if data == "confirm_restart":
-        _cmd_confirm_restart(chat_id, "")
+    except Exception as e:
+        telegram_api.log(f"Loi callback {data}: {e}")
+        telegram_api.reply(chat_id, f"Loi nut bam: {e}\nListen van dang chay.", parse_mode="")
         return True
-    if data == "confirm_close_apps":
-        _cmd_confirm_close_apps(chat_id, "")
-        return True
-    if data == "cancel_power":
-        _pending_confirmations.pop(chat_id, None)
-        telegram_api.send_message(chat_id, "Da huy lenh.")
-        return True
-    if data == "vpn_on_all":
-        _cmd_vpn_on(chat_id, "all")
-        return True
-    if data == "vpn_off_all":
-        _cmd_vpn_off(chat_id, "all")
-        return True
-    if data.startswith("vpn_on:"):
-        _cmd_vpn_on(chat_id, data.split(":", 1)[1])
-        return True
-    if data.startswith("vpn_off:"):
-        _cmd_vpn_off(chat_id, data.split(":", 1)[1])
-        return True
-    return False
 
 
 # ------------------------------- Bang dieu phoi -------------------------------
@@ -658,5 +748,13 @@ def dispatch(chat_id: str, text: str) -> bool:
     if handler is None:
         return False
 
-    handler(chat_id, args)
+    try:
+        handler(chat_id, args)
+    except Exception as e:
+        telegram_api.log(f"Loi {command}: {e}")
+        telegram_api.reply(
+            chat_id,
+            f"Loi {command}: {e}\nListen van dang chay. Xem pc_monitor.log neu can.",
+            parse_mode="",
+        )
     return True
