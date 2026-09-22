@@ -20,10 +20,19 @@ from . import config
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
 _HTML_TAG = re.compile(r"<[^>]+>")
 _log_lock = threading.Lock()
-_send_session = requests.Session()
-_send_session.mount("https://", HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=0))
+_tls = threading.local()
 _poll_session = requests.Session()
 _poll_session.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=2, max_retries=0))
+
+
+def _thread_session() -> requests.Session:
+    """Moi thread 1 Session — requests.Session khong thread-safe."""
+    sess = getattr(_tls, "session", None)
+    if sess is None:
+        sess = requests.Session()
+        sess.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=4, max_retries=0))
+        _tls.session = sess
+    return sess
 
 
 def log(message: str) -> None:
@@ -47,7 +56,7 @@ def _send_http(method: str, url: str, timeout: float, **kwargs):
     last_err = None
     for attempt in range(4):
         try:
-            last_resp = _send_session.request(method, url, timeout=timeout, **kwargs)
+            last_resp = _thread_session().request(method, url, timeout=timeout, **kwargs)
         except Exception as e:
             last_err = e
             time.sleep(0.4 * (attempt + 1))
@@ -67,11 +76,10 @@ def _send_http(method: str, url: str, timeout: float, **kwargs):
 
 def send_chat_action(chat_id: str, action: str = "typing") -> None:
     try:
-        _send_http(
-            "POST",
+        _thread_session().post(
             _url("sendChatAction"),
-            timeout=2,
             data={"chat_id": chat_id, "action": action},
+            timeout=2,
         )
     except Exception:
         pass
@@ -217,27 +225,42 @@ def set_my_commands(commands: list) -> bool:
         return False
 
 
-def send_photo(chat_id: str, image_path: Path, caption: str = "") -> bool:
-    try:
-        with open(image_path, "rb") as f:
-            resp = _send_http(
-                "POST",
-                _url("sendPhoto"),
-                timeout=30,
-                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
-                files={"photo": f},
-            )
+def send_photo(chat_id: str, image_path: Path, caption: str = "") -> tuple[bool, str]:
+    """Gui anh. Tra ve (ok, thong_bao_loi). Mo lai file moi lan retry."""
+    image_path = Path(image_path)
+    last_err = "khong gui duoc anh"
+    for attempt in range(2):
         try:
-            result = resp.json()
-        except Exception:
-            result = {}
-        if result.get("ok"):
-            return True
-        log(f"Telegram tra ve loi khi gui anh: {result}")
-        return False
-    except Exception as e:
-        log(f"Loi khi gui anh: {e}")
-        return False
+            with open(image_path, "rb") as f:
+                resp = _thread_session().post(
+                    _url("sendPhoto"),
+                    data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                    files={"photo": f},
+                    timeout=20,
+                )
+            try:
+                result = resp.json()
+            except Exception:
+                result = {}
+            if result.get("ok"):
+                return True, ""
+            if resp.status_code == 429:
+                raw = resp.headers.get("Retry-After", "1")
+                try:
+                    wait_s = min(float(raw), 8.0)
+                except ValueError:
+                    wait_s = 1.0
+                time.sleep(wait_s)
+                last_err = "Telegram 429 (qua nhieu request)"
+                continue
+            desc = result.get("description") or str(result)[:180]
+            last_err = f"HTTP {resp.status_code}: {desc}"
+            log(f"Telegram tra ve loi khi gui anh (lan {attempt + 1}): {result}")
+        except Exception as e:
+            last_err = str(e)
+            log(f"Loi khi gui anh (lan {attempt + 1}): {e}")
+        time.sleep(0.5 * (attempt + 1))
+    return False, last_err
 
 
 def api_reachable(timeout: float = 5) -> bool:

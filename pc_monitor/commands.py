@@ -26,7 +26,7 @@ _BG_SLOTS = threading.Semaphore(2)
 
 GROUP_META = {
     "info": {"label": "Trang thai", "timeout": 45, "maxsize": 12},
-    "screen": {"label": "Chup man hinh", "timeout": 45, "maxsize": 8},
+    "screen": {"label": "Chup man hinh", "timeout": 70, "maxsize": 8},
     "apps": {"label": "Ung dung", "timeout": 45, "maxsize": 8},
     "vpn": {"label": "VPN", "timeout": 90, "maxsize": 8},
     "power": {"label": "Tat/khoi dong", "timeout": 30, "maxsize": 4},
@@ -391,11 +391,11 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
         ok, result = actions.take_screenshot()
         if ok:
             path = result
-            sent = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
+            sent, err = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
             if not sent:
                 telegram_api.reply(
                     chat_id,
-                    "Da chup anh nhung khong gui duoc len Telegram (file qua lon / mat mang). Xem pc_monitor.log tren may.",
+                    f"Da chup anh nhung khong gui duoc len Telegram. {err}. Listen van dang chay.",
                     parse_mode="",
                 )
         else:

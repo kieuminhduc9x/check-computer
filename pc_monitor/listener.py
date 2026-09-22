@@ -85,18 +85,12 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
             _inflight += 1
             busy = False
 
-    threading.Thread(
-        target=commands.send_loading,
-        args=(chat_id, kind, waiting),
-        daemon=True,
-        name="loading",
-    ).start()
     if busy:
         threading.Thread(
             target=telegram_api.reply,
             args=(
                 chat_id,
-                f"Dang co {waiting} lenh chay song song (toi da {MAX_INFLIGHT}). Gui lai sau. Lenh dang chay khong bi dung.",
+                f"[{label}] Dang co {waiting} lenh chay song song (toi da {MAX_INFLIGHT}). Gui lai sau. Lenh dang chay khong bi dung.",
             ),
             kwargs={"parse_mode": "", "timeout": 3},
             daemon=True,
@@ -107,6 +101,7 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
         exclusive = _group_locks.get(group)
         got_lock = True
         try:
+            commands.send_loading(chat_id, kind, waiting)
             if exclusive:
                 got_lock = exclusive.acquire(timeout=timeout_sec)
                 if not got_lock:
