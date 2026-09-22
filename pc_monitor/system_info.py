@@ -555,6 +555,45 @@ def get_running_apps() -> list:
     return apps
 
 
+def match_running_app(query: str) -> tuple[str, dict | None, list[dict]]:
+    """Khop app dang mo. ('ok', item, []), ('many', None, hits), ('none', None, [])."""
+    q = (query or "").strip()
+    if not q:
+        return "none", None, []
+    apps = get_running_apps()
+    ql = q.lower()
+    if ql.endswith(".exe"):
+        ql_base = ql[:-4]
+    else:
+        ql_base = ql
+    for app in apps:
+        name = str(app.get("name") or "")
+        nl = name.lower()
+        nid = _app_id(name)
+        if nid == ql or nid == q or nl == ql or nl.replace(".exe", "") == ql_base:
+            return "ok", app, []
+    hits = []
+    for app in apps:
+        name = str(app.get("name") or "").lower()
+        if ql in name or name.replace(".exe", "").startswith(ql_base):
+            hits.append(app)
+    if len(hits) == 1:
+        return "ok", hits[0], []
+    if len(hits) > 1:
+        return "many", None, hits[:12]
+    return "none", None, []
+
+
+def close_running_keyboard(apps: list[dict]) -> dict | None:
+    if not apps:
+        return None
+    rows = []
+    for app in apps[:8]:
+        name = str(app.get("name") or "app")
+        rows.append([{"text": f"Tat {name[:28]}", "callback_data": f"c:{_app_id(name)}"}])
+    return {"inline_keyboard": rows}
+
+
 def get_foreground_app_name(apps: list | None = None) -> str | None:
     if apps is None:
         apps = get_running_apps()

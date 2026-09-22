@@ -23,7 +23,7 @@ from . import updater
 
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
-CONFIRM_TIMEOUT_SECONDS = 30
+CONFIRM_TIMEOUT_SECONDS = 90
 _BG_SLOTS = threading.Semaphore(2)
 
 GROUP_META = {
@@ -57,8 +57,8 @@ _LOADING = {
     "ip": "dang lay dia chi IP",
     "screenshot": "dang chup man hinh",
     "lock": "dang khoa man hinh",
-    "close_apps": "dang chuan bi tat ung dung",
-    "closeall": "dang chuan bi tat ung dung",
+    "close_apps": "dang chuan bi tat het ung dung",
+    "close": "dang tat 1 ung dung",
     "confirm_close_apps": "dang tat ung dung",
     "vpn": "dang doc profile Pritunl",
     "vpn_list": "dang doc profile Pritunl",
@@ -99,6 +99,8 @@ def _norm_loading_key(kind: str) -> str:
         return "confirm_restart"
     if key.startswith("o:"):
         return "open"
+    if key.startswith("c:"):
+        return "close"
     if key.startswith("confirm_close"):
         return "confirm_close_apps"
     return key
@@ -307,6 +309,7 @@ def build_help_text() -> str:
         "/installed — giong /software",
         f"/open chrome — mo 1 app da cai{_disabled_suffix(config.ENABLE_OPEN_APPS)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
+        f"/close chrome — tat 1 app dang mo{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
         f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
         "",
         "<b>[VPN]</b>",
@@ -364,6 +367,7 @@ def telegram_menu_commands() -> list:
     if config.ENABLE_LOCK:
         items.append(("lock", "[Ung dung] Khoa man hinh"))
     if config.ENABLE_CLOSE_APPS:
+        items.append(("close", "[Ung dung] Tat 1 app, vi du /close chrome"))
         items.append(("close_apps", "[Ung dung] Tat het ung dung dang mo"))
     if config.ENABLE_VPN:
         items.append(("vpn", "[VPN] Danh sach / bat tat Pritunl"))
@@ -561,6 +565,9 @@ def _cmd_close_apps(chat_id: str, args: str) -> None:
     if not config.ENABLE_CLOSE_APPS:
         telegram_api.send_message(chat_id, "Tinh nang tat app dang bi tat (ENABLE_CLOSE_APPS=false trong .env).")
         return
+    if args.strip():
+        _cmd_close(chat_id, args)
+        return
     try:
         apps = system_info.get_running_apps()
     except Exception as e:
@@ -575,10 +582,31 @@ def _cmd_close_apps(chat_id: str, args: str) -> None:
         "⚠️ Ban co chac muon <b>TAT HET UNG DUNG DANG MO</b>?\n"
         "Giu lai desktop, listener, va cua so dang chay bot.\n"
         f"Dang mo ({len(names)}): {preview}{extra}\n"
+        f"Tat 1 app: /close chrome\n"
         f"Nhan nut ben duoi, hoac gui /confirm_close_apps trong {CONFIRM_TIMEOUT_SECONDS} giay.",
         "confirm_close_apps",
-        "Xac nhan TAT APP",
+        "Xac nhan TAT HET",
     )
+
+
+def _cmd_close(chat_id: str, args: str) -> None:
+    if not config.ENABLE_CLOSE_APPS:
+        telegram_api.send_message(chat_id, "Tinh nang tat app dang bi tat (ENABLE_CLOSE_APPS=false trong .env).")
+        return
+    query = args.strip()
+    if not query:
+        apps = system_info.get_running_apps()
+        keyboard = system_info.close_running_keyboard(apps)
+        telegram_api.reply(
+            chat_id,
+            "Gui /close tenapp (vi du /close chrome) hoac bam nut. Tat het: /close_apps",
+            parse_mode="",
+            reply_markup=keyboard,
+        )
+        return
+    ok, msg, hits = actions.close_one_app(query)
+    keyboard = system_info.close_running_keyboard(hits) if hits else None
+    telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="", reply_markup=keyboard)
 
 
 def _cmd_note(chat_id: str, args: str) -> None:
@@ -813,15 +841,20 @@ def _run_restart(chat_id: str) -> None:
 
 def _confirm(chat_id: str, expected_action: str, execute_fn) -> None:
     pending = _pending_confirmations.get(chat_id)
-    if not pending or pending["action"] != expected_action:
+    expired = bool(pending and time.time() > pending["expires_at"])
+    mismatch = not pending or pending["action"] != expected_action
+    if mismatch and expected_action != "close_apps":
         telegram_api.send_message(chat_id, "Khong co lenh nao dang cho xac nhan. Hay gui lai lenh goc truoc.")
         return
-    if time.time() > pending["expires_at"]:
+    if expired and expected_action != "close_apps":
         telegram_api.send_message(chat_id, "Da het thoi gian xac nhan. Hay gui lai lenh goc neu van muon thuc hien.")
-        del _pending_confirmations[chat_id]
+        _pending_confirmations.pop(chat_id, None)
         return
+    if pending and (expired or pending["action"] == expected_action):
+        _pending_confirmations.pop(chat_id, None)
+    if mismatch and expected_action == "close_apps":
+        telegram_api.log("close_apps xac nhan khong qua pending — van tat app")
 
-    del _pending_confirmations[chat_id]
     try:
         ok, msg = execute_fn()
     except Exception as e:
@@ -968,6 +1001,9 @@ def handle_callback(chat_id: str, data: str) -> bool:
         if data.startswith("o:"):
             _cmd_open(chat_id, data.split(":", 1)[1])
             return True
+        if data.startswith("c:"):
+            _cmd_close(chat_id, data.split(":", 1)[1])
+            return True
         telegram_api.reply(chat_id, f"Khong hieu nut bam: {data}", parse_mode="")
         return True
     except Exception as e:
@@ -997,8 +1033,8 @@ COMMAND_TABLE = {
     "/ip": _cmd_ip,
     "/screenshot": _cmd_screenshot,
     "/lock": _cmd_lock,
+    "/close": _cmd_close,
     "/close_apps": _cmd_close_apps,
-    "/closeall": _cmd_close_apps,
     "/confirm_close_apps": _cmd_confirm_close_apps,
     "/vpn": _cmd_vpn,
     "/vpn_list": _cmd_vpn,
@@ -1026,7 +1062,7 @@ def dispatch(chat_id: str, text: str) -> bool:
         return False
 
     parts = text.split(maxsplit=1)
-    command = parts[0].split("@")[0].lower()  # ho tro dang "/status@ten_bot"
+    command = parts[0].split("@")[0].lower().replace("-", "_")
     args = parts[1] if len(parts) > 1 else ""
 
     handler = COMMAND_TABLE.get(command)

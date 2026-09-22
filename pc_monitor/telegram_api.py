@@ -168,7 +168,9 @@ def send_message(
         if _post_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup, timeout=timeout)[0]:
             return True
         log("Telegram loi sendMessage, thu gui text thuong.")
-        if _post_message(chat_id, _strip_html(text), parse_mode="", timeout=min(timeout, 8))[0]:
+        if _post_message(
+            chat_id, _strip_html(text), parse_mode="", reply_markup=reply_markup, timeout=min(timeout, 8)
+        )[0]:
             return True
         log("Telegram van loi khi gui tin nhan.")
         return False

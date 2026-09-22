@@ -9,6 +9,7 @@ import platform
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import config
@@ -364,6 +365,51 @@ def _protected_pids() -> set[int]:
     return pids
 
 
+def _windows_close_windows(pids: set[int]) -> int:
+    """Gui WM_CLOSE toi cua so visible cua pid (giong bam X), khong TerminateProcess ngay."""
+    if not pids:
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    WM_CLOSE = 0x0010
+    sent = 0
+    target = set(pids)
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+    def _callback(hwnd, lparam):
+        nonlocal sent
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in target:
+                user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+                sent += 1
+        except Exception:
+            return True
+        return True
+
+    user32.EnumWindows(EnumWindowsProc(_callback), 0)
+    return sent
+
+
+def _windows_taskkill(pids: list[int]) -> None:
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
+    for pid in pids:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                timeout=8,
+                capture_output=True,
+                creationflags=flags,
+            )
+        except Exception:
+            continue
+
+
 def _is_protected_app(name: str) -> bool:
     key = (name or "").strip().lower()
     if not key:
@@ -391,16 +437,35 @@ def _macos_quit_app(name: str) -> bool:
 def close_all_apps() -> tuple:
     """Tat cac ung dung giao dien dang mo. Giu desktop, listener, terminal cua bot."""
     try:
-        return _close_all_apps()
+        from . import system_info
+        return _close_app_entries(system_info.get_running_apps(), closing_all=True)
     except Exception as e:
         return False, f"Loi khi tat ung dung: {e}"
 
 
-def _close_all_apps() -> tuple:
+def close_one_app(query: str) -> tuple[bool, str, list[dict]]:
+    """Tat 1 app dang mo. hits khac rong khi nhieu app khop."""
     from . import system_info
+
+    q = (query or "").strip()
+    if not q:
+        return False, "Gui /close tenapp. Vi du /close chrome", []
+    status, item, hits = system_info.match_running_app(q)
+    if status == "none":
+        return False, f"Khong thay app dang mo khop '{q}'. Gui /apps de xem danh sach.", []
+    if status == "many":
+        names = ", ".join(str(a.get("name") or "?") for a in hits)
+        return False, f"Nhieu app khop: {names}. Bam nut hoac ghi ro hon.", hits
+    name = str((item or {}).get("name") or "")
+    if _is_protected_app(name):
+        return False, f"Khong tat {name} (desktop / listener / tien trinh he thong).", []
+    ok, msg = _close_app_entries([item or {}], closing_all=False)
+    return ok, msg, []
+
+
+def _close_app_entries(apps: list[dict], closing_all: bool) -> tuple:
     import psutil
 
-    apps = system_info.get_running_apps()
     keep = _protected_pids()
     closed: list[str] = []
     skipped: list[str] = []
@@ -417,10 +482,11 @@ def _close_all_apps() -> tuple:
             skipped.append(name)
             continue
         pids = [int(p) for p in (app.get("pids") or []) if p]
-        if not pids and system == "Darwin":
+        if not pids:
             try:
                 for proc in psutil.process_iter(["pid", "name"]):
-                    if (proc.info.get("name") or "") == name:
+                    pname = (proc.info.get("name") or "")
+                    if pname == name or pname.lower() == name.lower():
                         pids.append(int(proc.info["pid"]))
             except Exception:
                 pass
@@ -432,8 +498,13 @@ def _close_all_apps() -> tuple:
         ok = False
         if system == "Darwin":
             ok = _macos_quit_app(name)
+        elif system == "Windows":
+            _windows_close_windows(set(pids))
+            ok = True
         for pid in pids:
             seen_pids.add(pid)
+            if system == "Windows":
+                continue
             try:
                 proc = psutil.Process(pid)
                 if proc.pid in keep:
@@ -447,7 +518,20 @@ def _close_all_apps() -> tuple:
         else:
             failed.append(name)
 
-    if seen_pids:
+    if system == "Windows" and seen_pids:
+        time.sleep(2)
+        still = []
+        for pid in list(seen_pids):
+            try:
+                if psutil.pid_exists(pid) and pid not in keep:
+                    still.append(pid)
+            except Exception:
+                continue
+        if still:
+            _windows_taskkill(still)
+            time.sleep(1)
+
+    if seen_pids and system != "Windows":
         waiting = []
         for pid in seen_pids:
             try:
@@ -464,19 +548,34 @@ def _close_all_apps() -> tuple:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
 
+    still_open = []
+    if system == "Windows":
+        for pid in seen_pids:
+            try:
+                if psutil.pid_exists(pid) and pid not in keep:
+                    proc = psutil.Process(pid)
+                    still_open.append(proc.name())
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
     if not closed and not failed:
         return True, (
             "Khong tat app nao (chi con desktop / listener). "
             + (f"Bo qua: {', '.join(skipped[:8])}." if skipped else "")
         )
 
-    lines = [f"Da tat {len(closed)} ung dung."]
-    if closed:
+    if closing_all:
+        lines = [f"Da gui lenh tat {len(closed)} ung dung."]
+    else:
+        lines = [f"Da tat {closed[0]}." if closed else "Khong tat duoc app."]
+    if closing_all and closed:
         lines.append(", ".join(closed[:20]) + ("…" if len(closed) > 20 else ""))
     if skipped:
         lines.append("Giu lai: " + ", ".join(skipped[:8]))
     if failed:
         lines.append("Khong tat duoc: " + ", ".join(failed[:8]))
+    if still_open:
+        lines.append("Van song: " + ", ".join(sorted(set(still_open))[:8]))
     return True, "\n".join(lines)
 
 
