@@ -25,8 +25,30 @@ EXAMPLE = ROOT / ".env.example"
 REQ = ROOT / "requirements.txt"
 
 
+def _configure_stdio() -> None:
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    if os.name != "nt":
+        return
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    except Exception:
+        pass
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    text = str(msg)
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, errors="replace").decode(enc, errors="replace"), flush=True)
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -102,6 +124,7 @@ def ensure_env() -> bool:
 
 
 def main() -> None:
+    _configure_stdio()
     os.chdir(ROOT)
     log(f"PC Monitor Pro — start-project")
     log(f"Thu muc: {ROOT}")
@@ -132,6 +155,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    _configure_stdio()
     try:
         main()
     except KeyboardInterrupt:
