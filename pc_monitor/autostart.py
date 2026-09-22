@@ -693,11 +693,31 @@ def takeover_requested() -> bool:
 def _is_listen_cmdline(parts: list[str], project: str) -> bool:
     if "listen" not in parts:
         return False
-    if not any("main.py" in p.replace("\\", "/") for p in parts):
-        return False
-    proj = str(Path(project).resolve()).replace("\\", "/").rstrip("/").lower()
-    joined = " ".join(parts).replace("\\", "/").lower()
-    return (not proj) or proj in joined or joined.count("main.py") >= 1
+    return any("main.py" in p.replace("\\", "/") for p in parts)
+
+
+def _own_process_tree_pids() -> set[int]:
+    """py.exe / Git Bash / pythonw cha-con — khong duoc taskkill."""
+    pids = {os.getpid()}
+    try:
+        pids.add(os.getppid())
+    except Exception:
+        pass
+    try:
+        import psutil
+        proc = psutil.Process()
+        current = proc
+        for _ in range(8):
+            pids.add(current.pid)
+            parent = current.parent()
+            if parent is None:
+                break
+            current = parent
+        for child in proc.children(recursive=True):
+            pids.add(child.pid)
+    except Exception:
+        pass
+    return pids
 
 
 def _other_listener_pids() -> list[int]:
@@ -705,8 +725,8 @@ def _other_listener_pids() -> list[int]:
         import psutil
     except ImportError:
         return []
-    me = os.getpid()
-    project = str(_project_dir().resolve())
+    skip = _own_process_tree_pids()
+    project = str(_project_dir().resolve()).replace("\\", "/").rstrip("/").lower()
     pids = []
     deadline = time.time() + 2.0
     try:
@@ -715,11 +735,15 @@ def _other_listener_pids() -> list[int]:
                 break
             try:
                 pid = proc.info.get("pid")
-                if not pid or pid == me:
+                if not pid or int(pid) in skip:
                     continue
                 parts = [str(x) for x in (proc.info.get("cmdline") or [])]
-                if _is_listen_cmdline(parts, project):
-                    pids.append(int(pid))
+                if not _is_listen_cmdline(parts, project):
+                    continue
+                joined = " ".join(parts).replace("\\", "/").lower()
+                if project and project not in joined:
+                    continue
+                pids.append(int(pid))
             except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
                 continue
     except (psutil.AccessDenied, PermissionError):
@@ -759,8 +783,10 @@ def _pause_managed_listener() -> list[str]:
 
 
 def _force_kill(pid: int) -> None:
+    if pid in _own_process_tree_pids():
+        return
     if _os() == "Windows":
-        _run(["taskkill", "/PID", str(pid), "/F", "/T"])
+        _run(["taskkill", "/PID", str(pid), "/F"], timeout=5)
         return
     try:
         os.kill(pid, signal.SIGKILL)
@@ -770,18 +796,21 @@ def _force_kill(pid: int) -> None:
 
 def takeover_existing_listener() -> str:
     """Ghi de listen cu (service an / terminal cu). Khong can admin."""
-    try:
-        config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
-    except OSError:
-        pass
     notes = _pause_managed_listener()
-    pids = _other_listener_pids()
+    pids = [p for p in _other_listener_pids() if p not in _own_process_tree_pids()]
     if pids:
+        try:
+            config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
+        except OSError:
+            pass
         try:
             import psutil
         except ImportError:
             psutil = None
+        own = _own_process_tree_pids()
         for pid in pids:
+            if pid in own:
+                continue
             try:
                 if psutil:
                     psutil.Process(pid).terminate()
