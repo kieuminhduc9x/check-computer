@@ -20,7 +20,8 @@ from . import updater
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
-_JOB_QUEUE: Queue = Queue(maxsize=12)
+JOB_TIMEOUT_SEC = 60
+_JOB_QUEUE: Queue = Queue(maxsize=20)
 _shutting_down = False
 
 
@@ -56,34 +57,58 @@ def _save_offset(offset: int) -> None:
 
 
 def _enqueue(kind: str, chat_id: str, fn) -> None:
-    """Nhan lenh xong tra poll ngay. Xu ly tuan tu trong worker, tranh treo hang loat."""
+    """Nhan lenh xong tra poll ngay. Loading gui o thread khac de khong treo getUpdates."""
     waiting = _JOB_QUEUE.qsize()
-    commands.send_loading(chat_id, kind, waiting)
+    threading.Thread(
+        target=commands.send_loading,
+        args=(chat_id, kind, waiting),
+        daemon=True,
+        name="loading",
+    ).start()
     try:
         _JOB_QUEUE.put_nowait((kind, chat_id, fn))
     except Full:
-        telegram_api.reply(
-            chat_id,
-            "Hang doi day (qua nhieu lenh cung luc). Doi tin ket qua roi gui lai.",
-            parse_mode="",
-        )
+        threading.Thread(
+            target=telegram_api.reply,
+            args=(chat_id, "Hang doi day (qua nhieu lenh). Doi tin ket qua roi gui lai."),
+            kwargs={"parse_mode": "", "timeout": 3},
+            daemon=True,
+        ).start()
 
 
 def _command_worker() -> None:
     while True:
         kind, chat_id, fn = _JOB_QUEUE.get()
-        try:
-            fn()
-        except Exception as e:
-            telegram_api.log(f"Worker {kind}: {e}")
+        done = threading.Event()
+        box: dict = {"err": None}
+
+        def _run() -> None:
+            try:
+                fn()
+            except Exception as e:
+                box["err"] = e
+            finally:
+                done.set()
+
+        threading.Thread(target=_run, daemon=True, name=f"job-{kind[:12]}").start()
+        finished = done.wait(JOB_TIMEOUT_SEC)
+        if not finished:
+            telegram_api.log(f"Job {kind} qua {JOB_TIMEOUT_SEC}s")
             if chat_id:
                 telegram_api.reply(
                     chat_id,
-                    f"Loi {kind}: {e}\nListen van dang chay.",
+                    f"{kind} chua xong sau {JOB_TIMEOUT_SEC}s. Listen van nhan lenh moi. Gui lai neu can.",
                     parse_mode="",
+                    timeout=5,
                 )
-        finally:
-            _JOB_QUEUE.task_done()
+        elif box["err"] and chat_id:
+            telegram_api.log(f"Worker {kind}: {box['err']}")
+            telegram_api.reply(
+                chat_id,
+                f"Loi {kind}: {box['err']}\nListen van dang chay.",
+                parse_mode="",
+            )
+        _JOB_QUEUE.task_done()
 
 
 def _alert_watcher_loop() -> None:
@@ -269,7 +294,11 @@ def run() -> None:
                     "Telegram Conflict: con listen khac cung BOT_TOKEN "
                     "(service an / terminal khac / may khac). Dang ghi de tren may nay..."
                 )
-                telegram_api.log(autostart.takeover_existing_listener())
+                threading.Thread(
+                    target=autostart.takeover_existing_listener,
+                    daemon=True,
+                    name="takeover",
+                ).start()
             else:
                 telegram_api.log(f"Telegram tra ve loi: {result}. Thu lai sau {RETRY_SLEEP_SEC}s")
             time.sleep(RETRY_SLEEP_SEC)
@@ -287,7 +316,7 @@ def run() -> None:
                     chat = msg.get("chat") or callback.get("from") or {}
                     chat_id = str(chat.get("id", ""))
                     data = str(callback.get("data") or "")
-                    telegram_api.answer_callback_query(cq_id, commands.loading_text(f"nut:{data}"))
+                    telegram_api.answer_callback_query(cq_id, "Dang xu ly...")
                     if chat_id not in config.ALLOWED_CHAT_IDS:
                         telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
                         continue

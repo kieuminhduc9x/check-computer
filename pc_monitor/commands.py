@@ -92,9 +92,8 @@ def loading_text(kind: str, waiting: int = 0) -> str:
 
 
 def send_loading(chat_id: str, kind: str, waiting: int = 0) -> bool:
-    telegram_api.send_chat_action(chat_id)
     text = loading_text(kind, waiting)
-    sent = telegram_api.reply(chat_id, text, parse_mode="")
+    sent = telegram_api.reply(chat_id, text, parse_mode="", timeout=3)
     if not sent:
         telegram_api.log(f"Khong gui duoc tin loading {kind} toi {chat_id}")
     return sent
@@ -441,7 +440,7 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
             ("✅ " if ok else "❌ ") + prefix + msg.replace("&", "&amp;").replace("<", "&lt;"),
         )
 
-    _bg(chat_id, "/autostart", _run)
+    _run()
 
 
 def _cmd_autostart_off(chat_id: str, args: str) -> None:
@@ -472,7 +471,7 @@ def _cmd_reload(chat_id: str, args: str) -> None:
         )
         updater.spawn_new_listener(kind="reload")
 
-    _bg(chat_id, "/reload", _run)
+    _run()
 
 
 def _cmd_service(chat_id: str, args: str) -> None:
@@ -499,7 +498,7 @@ def _cmd_service(chat_id: str, args: str) -> None:
                 parse_mode="",
             )
 
-    _bg(chat_id, "/service", _run)
+    _run()
 
 
 def _cmd_update(chat_id: str, args: str) -> None:
@@ -520,7 +519,7 @@ def _cmd_update(chat_id: str, args: str) -> None:
             time.sleep(0.5)
             updater.spawn_new_listener()
 
-    _bg(chat_id, "/update", _run)
+    _run()
 
 
 def _power_lock_line() -> str:
@@ -679,7 +678,7 @@ def _cmd_vpn(chat_id: str, args: str) -> None:
         if not sent:
             telegram_api.send_message(chat_id, vpn.format_list_text(profiles), parse_mode="")
 
-    _bg(chat_id, "/vpn", _run)
+    _run()
 
 
 def _cmd_vpn_on(chat_id: str, args: str) -> None:
@@ -707,7 +706,7 @@ def _cmd_vpn_on(chat_id: str, args: str) -> None:
         started, msg = vpn.start_profile(profile["id"])
         telegram_api.reply(chat_id, ("OK. " if started else "Loi. ") + msg, parse_mode="")
 
-    _bg(chat_id, "/vpn_on", _run)
+    _run()
 
 
 def _cmd_vpn_off(chat_id: str, args: str) -> None:
@@ -731,7 +730,7 @@ def _cmd_vpn_off(chat_id: str, args: str) -> None:
         stopped, msg = vpn.stop_profile(profile["id"])
         telegram_api.reply(chat_id, ("OK. " if stopped else "Loi. ") + msg, parse_mode="")
 
-    _bg(chat_id, "/vpn_off", _run)
+    _run()
 
 
 def handle_callback(chat_id: str, data: str) -> bool:

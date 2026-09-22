@@ -38,7 +38,7 @@ def send_chat_action(chat_id: str, action: str = "typing") -> None:
         requests.post(
             _url("sendChatAction"),
             data={"chat_id": chat_id, "action": action},
-            timeout=5,
+            timeout=2,
         )
     except Exception:
         pass
@@ -48,13 +48,19 @@ def _strip_html(text: str) -> str:
     return _HTML_TAG.sub("", str(text))
 
 
-def _post_message(chat_id: str, text: str, parse_mode: str = "", reply_markup: dict | None = None) -> bool:
+def _post_message(
+    chat_id: str,
+    text: str,
+    parse_mode: str = "",
+    reply_markup: dict | None = None,
+    timeout: int = 15,
+) -> bool:
     data = {"chat_id": chat_id, "text": str(text)[:4000] or "(trong)"}
     if parse_mode:
         data["parse_mode"] = parse_mode
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
-    resp = requests.post(_url("sendMessage"), data=data, timeout=15)
+    resp = requests.post(_url("sendMessage"), data=data, timeout=timeout)
     try:
         result = resp.json()
     except Exception:
@@ -62,32 +68,46 @@ def _post_message(chat_id: str, text: str, parse_mode: str = "", reply_markup: d
     return bool(result.get("ok"))
 
 
-def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+def send_message(
+    chat_id: str,
+    text: str,
+    parse_mode: str = "HTML",
+    reply_markup: dict | None = None,
+    timeout: int = 15,
+) -> bool:
     """Gui tin. Khong raise — that bai thi thu text thuong, roi tra False."""
     if not text:
         text = "(trong)"
     text = str(text)[:4000]
     try:
-        if _post_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup):
+        if _post_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup, timeout=timeout):
             return True
         log("Telegram loi sendMessage, thu gui text thuong.")
-        if _post_message(chat_id, _strip_html(text), parse_mode=""):
+        if _post_message(chat_id, _strip_html(text), parse_mode="", timeout=min(timeout, 8)):
             return True
         log("Telegram van loi khi gui tin nhan.")
         return False
     except Exception as e:
         log(f"Loi khi gui tin nhan: {e}")
         try:
-            return _post_message(chat_id, _strip_html(text)[:500], parse_mode="")
+            return _post_message(chat_id, _strip_html(text)[:500], parse_mode="", timeout=5)
         except Exception as e2:
             log(f"Gui tin nhan that bai lan cuoi: {e2}")
             return False
 
 
-def reply(chat_id: str, text: str, parse_mode: str = "", reply_markup: dict | None = None) -> bool:
+def reply(
+    chat_id: str,
+    text: str,
+    parse_mode: str = "",
+    reply_markup: dict | None = None,
+    timeout: int = 15,
+) -> bool:
     """Ket qua lenh: luon co gang gui, khong raise, mac dinh text thuong."""
     try:
-        return send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+        return send_message(
+            chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup, timeout=timeout
+        )
     except Exception as e:
         log(f"reply that bai: {e}")
         return False
@@ -153,7 +173,7 @@ def set_my_commands(commands: list) -> bool:
             return True
         log(f"Khong cap nhat duoc menu Telegram: {result}")
         return False
-    except requests.RequestException as e:
+    except Exception as e:
         log(f"Loi mang khi cap nhat menu Telegram: {e}")
         return False
 
@@ -181,16 +201,25 @@ def send_photo(chat_id: str, image_path: Path, caption: str = "") -> bool:
 
 
 def get_updates(offset: int, timeout: int) -> dict:
-    resp = requests.post(
-        _url("getUpdates"),
-        data={
-            "offset": offset,
-            "timeout": timeout,
-            "allowed_updates": json.dumps(["message", "callback_query"]),
-        },
-        timeout=timeout + 10,
-    )
-    return resp.json()
+    try:
+        resp = requests.post(
+            _url("getUpdates"),
+            data={
+                "offset": offset,
+                "timeout": timeout,
+                "allowed_updates": json.dumps(["message", "callback_query"]),
+            },
+            timeout=timeout + 10,
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            return {"ok": False, "description": f"Telegram JSON loi ({resp.status_code})"}
+        if isinstance(data, dict):
+            return data
+        return {"ok": False, "description": str(data)[:300]}
+    except Exception as e:
+        return {"ok": False, "description": str(e)}
 
 
 def answer_callback_query(callback_id: str, text: str = "") -> None:
@@ -198,6 +227,6 @@ def answer_callback_query(callback_id: str, text: str = "") -> None:
         data = {"callback_query_id": callback_id}
         if text:
             data["text"] = str(text)[:180]
-        requests.post(_url("answerCallbackQuery"), data=data, timeout=10)
+        requests.post(_url("answerCallbackQuery"), data=data, timeout=2)
     except Exception:
         pass
