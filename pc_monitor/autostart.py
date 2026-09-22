@@ -738,12 +738,8 @@ def _other_listener_pids() -> list[int]:
                 if not pid or int(pid) in skip:
                     continue
                 parts = [str(x) for x in (proc.info.get("cmdline") or [])]
-                if not _is_listen_cmdline(parts, project):
-                    continue
-                joined = " ".join(parts).replace("\\", "/").lower()
-                if project and project not in joined:
-                    continue
-                pids.append(int(pid))
+                if _is_listen_cmdline(parts, project):
+                    pids.append(int(pid))
             except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
                 continue
     except (psutil.AccessDenied, PermissionError):

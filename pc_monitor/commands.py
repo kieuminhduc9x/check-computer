@@ -307,7 +307,18 @@ def _request_confirmation(chat_id: str, action: str, prompt: str, confirm_data: 
             {"text": "Huy", "callback_data": "cancel_power"},
         ]]
     }
-    telegram_api.send_message(chat_id, prompt, reply_markup=markup)
+    sent = telegram_api.send_message(chat_id, prompt, reply_markup=markup)
+    if not sent:
+        confirm_cmd = {
+            "shutdown": "/confirm_shutdown",
+            "restart": "/confirm_restart",
+            "close_apps": "/confirm_close_apps",
+        }.get(action, "/help")
+        telegram_api.send_message(
+            chat_id,
+            f"Can xac nhan. Gui {confirm_cmd} trong {CONFIRM_TIMEOUT_SECONDS} giay.",
+            parse_mode="",
+        )
 
 
 def _cmd_shutdown_now(chat_id: str, args: str) -> None:
@@ -328,6 +339,7 @@ def _cmd_restart_now(chat_id: str, args: str) -> None:
     if not config.ENABLE_SHUTDOWN_RESTART:
         telegram_api.send_message(chat_id, "Tinh nang tat/khoi dong lai dang bi tat (ENABLE_SHUTDOWN_RESTART=false trong .env).")
         return
+    telegram_api.log(f"Nhan /restart_now tu {chat_id}")
     _request_confirmation(
         chat_id, "restart",
         "⚠️ Ban co chac muon <b>KHOI DONG LAI MAY NGAY BAY GIO</b>?\n"

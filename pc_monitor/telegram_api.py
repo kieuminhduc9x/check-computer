@@ -109,6 +109,14 @@ def mark_boot_notified() -> None:
         pass
 
 
+def clear_webhook() -> None:
+    """Tranh getUpdates bi chan neu bot tung bat webhook."""
+    try:
+        requests.post(_url("deleteWebhook"), data={"drop_pending_updates": "false"}, timeout=10)
+    except Exception:
+        pass
+
+
 def set_my_commands(commands: list) -> bool:
     """Dang ky danh sach lenh len menu '/' cua Telegram."""
     try:

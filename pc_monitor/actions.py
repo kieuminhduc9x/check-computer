@@ -168,8 +168,12 @@ def _windows_power(restart: bool) -> tuple:
     """Force shutdown/restart — can khi man hinh khoa (khong co UI de dong app)."""
     flag = "/r" if restart else "/s"
     verb = "khoi dong lai" if restart else "tat"
+    windir = os.environ.get("WINDIR") or r"C:\Windows"
+    shutdown_exe = str(Path(windir) / "System32" / "shutdown.exe")
+    if not Path(shutdown_exe).exists():
+        shutdown_exe = "shutdown.exe"
     result = subprocess.run(
-        ["shutdown", flag, "/t", "5", "/f"],
+        [shutdown_exe, flag, "/t", "5", "/f"],
         capture_output=True, text=True, timeout=15,
     )
     if result.returncode == 0:

@@ -130,6 +130,7 @@ def run() -> None:
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
+    telegram_api.clear_webhook()
     telegram_api.set_my_commands(commands.telegram_menu_commands())
 
     ready_thread = threading.Thread(target=_notify_service_ready, daemon=True)
