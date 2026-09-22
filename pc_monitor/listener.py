@@ -58,19 +58,13 @@ def _save_offset(offset: int) -> None:
 def _enqueue(kind: str, chat_id: str, fn) -> None:
     """Nhan lenh xong tra poll ngay. Xu ly tuan tu trong worker, tranh treo hang loat."""
     waiting = _JOB_QUEUE.qsize()
+    commands.send_loading(chat_id, kind, waiting)
     try:
         _JOB_QUEUE.put_nowait((kind, chat_id, fn))
     except Full:
         telegram_api.reply(
             chat_id,
             "Hang doi day (qua nhieu lenh cung luc). Doi tin ket qua roi gui lai.",
-            parse_mode="",
-        )
-        return
-    if waiting >= 1:
-        telegram_api.reply(
-            chat_id,
-            f"Da nhan {kind}. Dang xu ly, con {waiting} lenh truoc do.",
             parse_mode="",
         )
 
@@ -293,7 +287,7 @@ def run() -> None:
                     chat = msg.get("chat") or callback.get("from") or {}
                     chat_id = str(chat.get("id", ""))
                     data = str(callback.get("data") or "")
-                    telegram_api.answer_callback_query(cq_id)
+                    telegram_api.answer_callback_query(cq_id, commands.loading_text(f"nut:{data}"))
                     if chat_id not in config.ALLOWED_CHAT_IDS:
                         telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
                         continue

@@ -23,6 +23,82 @@ _pending_confirmations = {}
 CONFIRM_TIMEOUT_SECONDS = 30
 _BG_SLOTS = threading.Semaphore(2)
 
+_LOADING = {
+    "status": "dang lay trang thai may",
+    "ping": "dang kiem tra may con online",
+    "help": "dang lay danh sach lenh",
+    "start": "dang lay danh sach lenh",
+    "cpu": "dang do CPU",
+    "ram": "dang do RAM",
+    "disk": "dang do o dia",
+    "procs": "dang liet ke tien trinh",
+    "apps": "dang liet ke ung dung dang mo",
+    "windows": "dang liet ke cua so",
+    "ip": "dang lay dia chi IP",
+    "screenshot": "dang chup man hinh",
+    "lock": "dang khoa man hinh",
+    "close_apps": "dang chuan bi tat ung dung",
+    "closeall": "dang chuan bi tat ung dung",
+    "confirm_close_apps": "dang tat ung dung",
+    "vpn": "dang doc profile Pritunl",
+    "vpn_list": "dang doc profile Pritunl",
+    "vpn_on": "dang bat VPN",
+    "vpn_off": "dang tat VPN",
+    "vpn_on_all": "dang bat tat ca VPN",
+    "vpn_off_all": "dang tat tat ca VPN",
+    "note": "dang luu ghi chu",
+    "autostart": "dang kiem tra / cai autostart",
+    "autostart_off": "dang go autostart",
+    "service": "dang kiem tra service khoi dong",
+    "svc": "dang kiem tra service khoi dong",
+    "reload": "dang reload listen",
+    "service_reload": "dang reload listen",
+    "update": "dang git pull va cap nhat",
+    "shutdown_now": "dang tao xac nhan tat may",
+    "restart_now": "dang tao xac nhan khoi dong lai",
+    "confirm_shutdown": "dang gui lenh tat may",
+    "confirm_restart": "dang gui lenh khoi dong lai",
+    "cancel_power": "dang huy lenh",
+}
+
+
+def _norm_loading_key(kind: str) -> str:
+    key = (kind or "").strip().lower().split("@")[0]
+    if key.startswith("nut:"):
+        key = key[4:]
+    if key.startswith("/"):
+        key = key[1:]
+    key = key.split()[0] if key else ""
+    if key.startswith("vpn_on"):
+        return "vpn_on_all" if key in ("vpn_on_all", "vpn_on:all") else "vpn_on"
+    if key.startswith("vpn_off"):
+        return "vpn_off_all" if key in ("vpn_off_all", "vpn_off:all") else "vpn_off"
+    if key.startswith("confirm_shutdown"):
+        return "confirm_shutdown"
+    if key.startswith("confirm_restart"):
+        return "confirm_restart"
+    if key.startswith("confirm_close"):
+        return "confirm_close_apps"
+    return key
+
+
+def loading_text(kind: str, waiting: int = 0) -> str:
+    key = _norm_loading_key(kind)
+    action = _LOADING.get(key) or f"dang xu ly {kind or 'lenh'}"
+    line = f"Dang nhan lenh. {action}..."
+    if waiting > 0:
+        line += f" Hang doi: {waiting} lenh truoc."
+    return line
+
+
+def send_loading(chat_id: str, kind: str, waiting: int = 0) -> bool:
+    telegram_api.send_chat_action(chat_id)
+    text = loading_text(kind, waiting)
+    sent = telegram_api.reply(chat_id, text, parse_mode="")
+    if not sent:
+        telegram_api.log(f"Khong gui duoc tin loading {kind} toi {chat_id}")
+    return sent
+
 
 def _reply(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
     return telegram_api.reply(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -330,7 +406,6 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
     if arg in ("reload", "restart", "refresh"):
         _cmd_reload(chat_id, "")
         return
-    telegram_api.send_message(chat_id, "Dang kiem tra /autostart...")
     force = arg in ("force", "reinstall", "again")
 
     def _run() -> None:
@@ -388,13 +463,13 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
 
 def _cmd_reload(chat_id: str, args: str) -> None:
     telegram_api.log(f"Nhan /reload tu {chat_id}")
-    telegram_api.send_message(
-        chat_id,
-        "Dang reload listen...\nListen cu se thoat, listen moi se bao khi san sang.",
-        parse_mode="",
-    )
 
     def _run() -> None:
+        telegram_api.reply(
+            chat_id,
+            "Listen cu se thoat, listen moi se bao khi san sang.",
+            parse_mode="",
+        )
         updater.spawn_new_listener(kind="reload")
 
     _bg(chat_id, "/reload", _run)
@@ -406,7 +481,6 @@ def _cmd_service(chat_id: str, args: str) -> None:
         _cmd_reload(chat_id, "")
         return
     telegram_api.log(f"Nhan /service tu {chat_id}")
-    telegram_api.reply(chat_id, "Dang kiem tra service...", parse_mode="")
 
     def _run() -> None:
         text = autostart.status_text(fast=True)
@@ -430,14 +504,6 @@ def _cmd_service(chat_id: str, args: str) -> None:
 
 def _cmd_update(chat_id: str, args: str) -> None:
     telegram_api.log(f"Nhan /update tu {chat_id}")
-    telegram_api.send_chat_action(chat_id)
-    sent = telegram_api.send_message(
-        chat_id,
-        "Dang git pull --ff-only...\nThuong tra loi trong 10-30 giay.",
-        parse_mode="",
-    )
-    if not sent:
-        telegram_api.log("Khong gui duoc tin ACK /update")
 
     def _run() -> None:
         try:
@@ -599,7 +665,6 @@ def _cmd_vpn(chat_id: str, args: str) -> None:
     if arg in ("off", "stop", "down"):
         _cmd_vpn_off(chat_id, "")
         return
-    telegram_api.send_message(chat_id, "Dang doc profile Pritunl...", parse_mode="")
 
     def _run() -> None:
         ok, err, profiles = vpn.list_profiles()
@@ -620,8 +685,6 @@ def _cmd_vpn(chat_id: str, args: str) -> None:
 def _cmd_vpn_on(chat_id: str, args: str) -> None:
     if not _vpn_guard(chat_id):
         return
-    telegram_api.send_chat_action(chat_id)
-    telegram_api.reply(chat_id, "Dang bat VPN...", parse_mode="")
     query = args.strip()
 
     def _run() -> None:
@@ -650,8 +713,6 @@ def _cmd_vpn_on(chat_id: str, args: str) -> None:
 def _cmd_vpn_off(chat_id: str, args: str) -> None:
     if not _vpn_guard(chat_id):
         return
-    telegram_api.send_chat_action(chat_id)
-    telegram_api.reply(chat_id, "Dang tat VPN...", parse_mode="")
     query = args.strip()
 
     def _run() -> None:

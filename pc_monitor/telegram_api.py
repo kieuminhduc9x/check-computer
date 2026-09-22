@@ -195,10 +195,9 @@ def get_updates(offset: int, timeout: int) -> dict:
 
 def answer_callback_query(callback_id: str, text: str = "") -> None:
     try:
-        requests.post(
-            _url("answerCallbackQuery"),
-            data={"callback_query_id": callback_id, "text": text},
-            timeout=10,
-        )
+        data = {"callback_query_id": callback_id}
+        if text:
+            data["text"] = str(text)[:180]
+        requests.post(_url("answerCallbackQuery"), data=data, timeout=10)
     except Exception:
         pass
