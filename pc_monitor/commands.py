@@ -251,12 +251,12 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
                 already, detail = autostart.is_registered()
             except Exception:
                 already, detail = False, ""
-            if already:
+            if already or autostart.running_as_listener():
                 telegram_api.send_message(
                     chat_id,
-                    "✅ Autostart <b>da dang ky</b>, khong cai lai "
-                    "(tranh UAC treo sau reboot).\n"
-                    f"{detail}\n"
+                    "✅ Autostart <b>dang dung</b> — may vua boot, listen da tu chay.\n"
+                    "Khong can tim listen cu (chi can 1 process).\n"
+                    f"{detail or 'Listen hien tai dang tra loi Telegram.'}\n"
                     "Xem chi tiet: /service\n"
                     "Muon cai lai: /autostart force",
                 )
@@ -368,15 +368,30 @@ def _cmd_restart_now(chat_id: str, args: str) -> None:
     if not config.ENABLE_SHUTDOWN_RESTART:
         telegram_api.send_message(chat_id, "Tinh nang tat/khoi dong lai dang bi tat (ENABLE_SHUTDOWN_RESTART=false trong .env).")
         return
-    telegram_api.log(f"Nhan /restart_now tu {chat_id}")
+    telegram_api.log(f"Nhan /restart_now tu {chat_id} args={args!r}")
+    arg = args.strip().lower()
+    pending = _pending_confirmations.get(chat_id)
+    if arg in ("yes", "now", "ok", "confirm") or (
+        pending and pending["action"] == "restart" and time.time() <= pending["expires_at"]
+    ):
+        telegram_api.send_message(chat_id, "Dang gui lenh restart...")
+        _confirm(chat_id, "restart", actions.restart_now) if pending else _run_restart(chat_id)
+        return
+    telegram_api.send_message(chat_id, "Da nhan /restart_now — can xac nhan ben duoi.")
     _request_confirmation(
         chat_id, "restart",
         "⚠️ Ban co chac muon <b>KHOI DONG LAI MAY NGAY BAY GIO</b>?\n"
         f"{_power_lock_line()}\n"
-        f"Nhan nut ben duoi, hoac gui /confirm_restart trong {CONFIRM_TIMEOUT_SECONDS} giay.",
+        f"Nhan nut, gui /confirm_restart, hoac gui lai /restart_now trong {CONFIRM_TIMEOUT_SECONDS} giay.",
         "confirm_restart",
         "Xac nhan RESTART",
     )
+
+
+def _run_restart(chat_id: str) -> None:
+    _pending_confirmations.pop(chat_id, None)
+    ok, msg = actions.restart_now()
+    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg)
 
 
 def _confirm(chat_id: str, expected_action: str, execute_fn) -> None:
@@ -399,6 +414,11 @@ def _cmd_confirm_shutdown(chat_id: str, args: str) -> None:
 
 
 def _cmd_confirm_restart(chat_id: str, args: str) -> None:
+    pending = _pending_confirmations.get(chat_id)
+    if not pending or pending["action"] != "restart":
+        telegram_api.send_message(chat_id, "Dang restart (khong can gui /restart_now lai)...")
+        _run_restart(chat_id)
+        return
     _confirm(chat_id, "restart", actions.restart_now)
 
 

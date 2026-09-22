@@ -181,6 +181,17 @@ def _windows_power(restart: bool) -> tuple:
 
     err = (result.stderr or result.stdout or "").strip()
     try:
+        ps_cmd = "Restart-Computer -Force" if restart else "Stop-Computer -Force"
+        ps = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=15,
+        )
+        if ps.returncode == 0:
+            return True, f"Da gui {ps_cmd}.{_lock_note()}"
+        err = (err + " | " + (ps.stderr or ps.stdout or "")).strip()
+    except Exception:
+        pass
+    try:
         import ctypes
         _enable_windows_shutdown_privilege()
         ewx_force = 0x00000004

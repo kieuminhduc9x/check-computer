@@ -888,7 +888,7 @@ def takeover_existing_listener() -> str:
         time.sleep(0.3)
         notes.append("Da tat listen cu: " + ", ".join(f"PID {p}" for p in pids))
     else:
-        notes.append("Khong thay listen cu")
+        notes.append("Listen dang chay mot minh (binh thuong, khong can listen cu)")
     try:
         config.TAKEOVER_FILE.unlink(missing_ok=True)
     except OSError:
