@@ -299,18 +299,42 @@ def _win_pythonw() -> str:
     return str(pythonw if pythonw.exists() else exe)
 
 
+def _win_short_path(path: Path | str) -> str:
+    """Duong dan 8.3 ASCII neu co — VBScript khong doc UTF-8 / tieng Viet."""
+    raw = str(Path(path).resolve())
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(520)
+        n = ctypes.windll.kernel32.GetShortPathNameW(raw, buf, 520)
+        if n and buf.value and all(ord(c) < 128 for c in buf.value):
+            return buf.value
+    except Exception:
+        pass
+    return raw
+
+
+def _vbs_quote(text: str) -> str:
+    return text.replace('"', '""')
+
+
+def _write_vbs(path: Path, content: str) -> None:
+    # WSH chi an toan voi UTF-16 LE + BOM. UTF-8 BOM = 800A0408 Invalid character.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-16")
+
+
 def _win_write_listen_vbs() -> Path:
     """Chay listener an, khong mo cua so CMD (tranh bi tat nham luc dang nhap)."""
     dest = _win_autostart_dir() / "listen.vbs"
-    pythonw = _win_pythonw()
-    main_py = _project_dir() / "main.py"
-    project = _project_dir()
-    dest.write_text(
+    pythonw = _vbs_quote(_win_short_path(_win_pythonw()))
+    main_py = _vbs_quote(_win_short_path(_project_dir() / "main.py"))
+    project = _vbs_quote(_win_short_path(_project_dir()))
+    _write_vbs(
+        dest,
         "On Error Resume Next\r\n"
         "Set sh = CreateObject(\"WScript.Shell\")\r\n"
         f"sh.CurrentDirectory = \"{project}\"\r\n"
         f"sh.Run \"\"\"{pythonw}\"\" -u \"\"{main_py}\"\" listen\", 0, False\r\n",
-        encoding="utf-8-sig",
     )
     return dest
 
@@ -329,7 +353,7 @@ def refresh_windows_startup() -> str:
             removed.append(name)
     vbs = _win_write_listen_vbs()
     dest = dest_dir / "PCMonitorPro_Listener.vbs"
-    dest.write_text(vbs.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+    dest.write_bytes(vbs.read_bytes())
     try:
         _run(
             [
@@ -514,7 +538,7 @@ def _install_windows_startup_folder(cmds: dict[str, Path]) -> tuple[bool, str]:
     for name, src in mapping:
         dest = dest_dir / name
         if name.endswith(".vbs"):
-            dest.write_text(src.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+            dest.write_bytes(src.read_bytes())
         else:
             dest.write_text(
                 "@echo off\r\n"
