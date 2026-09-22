@@ -39,7 +39,9 @@ def build_event_message(event: str) -> str:
     if event in ("startup", "ready"):
         extra = f"\nDa bat lien tuc: {system_info.get_uptime_str()}"
     if event == "ready":
-        extra += "\nListener Telegram dang chay — gui /status de kiem tra."
+        extra += (
+            "\nListener ban day du — gui /status, /service, /autostart, /help."
+        )
 
     return (
         f"<b>{title}</b>\n"
@@ -59,7 +61,7 @@ def _disabled_suffix(enabled: bool) -> str:
 
 def build_help_text() -> str:
     lines = [
-        "🤖 <b>Danh sach lenh</b>",
+        "🤖 <b>Danh sach lenh</b> (ban day du: co /service /autostart)",
         "",
         "<b>Trang thai may</b>",
         "/status — may dang bat, CPU/RAM, app dang dung, app dang mo",

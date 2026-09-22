@@ -130,6 +130,12 @@ def run() -> None:
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
+    try:
+        refreshed = autostart.refresh_windows_startup()
+        if refreshed:
+            telegram_api.log(refreshed)
+    except Exception as e:
+        telegram_api.log(f"Khong cap nhat duoc Startup: {e}")
     telegram_api.clear_webhook()
     telegram_api.set_my_commands(commands.telegram_menu_commands())
 

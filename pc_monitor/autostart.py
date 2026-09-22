@@ -315,6 +315,35 @@ def _win_write_listen_vbs() -> Path:
     return dest
 
 
+def refresh_windows_startup() -> str:
+    """Ghi lai Startup theo thu muc hien tai, xoa .cmd listen (popup CMD / Run)."""
+    if _os() != "Windows":
+        return ""
+    dest_dir = _win_startup_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    removed = []
+    for name in ("PCMonitorPro_Listener.cmd", "PCMonitorPro_Listener.bat"):
+        old = dest_dir / name
+        if old.exists():
+            old.unlink()
+            removed.append(name)
+    vbs = _win_write_listen_vbs()
+    dest = dest_dir / "PCMonitorPro_Listener.vbs"
+    dest.write_text(vbs.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
+    try:
+        _run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                f"Unblock-File -LiteralPath {json.dumps(str(dest))}",
+            ],
+            timeout=5,
+        )
+    except Exception:
+        pass
+    extra = f" Da xoa popup: {', '.join(removed)}." if removed else ""
+    return f"Da cap nhat Startup an -> {dest}.{extra}"
+
+
 def _win_write_cmd(name: str, action: str) -> Path:
     dest = _win_autostart_dir() / f"{name}.cmd"
     python = _win_python()
