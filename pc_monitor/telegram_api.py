@@ -7,38 +7,71 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from . import config
 
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
 _HTML_TAG = re.compile(r"<[^>]+>")
+_log_lock = threading.Lock()
+_send_session = requests.Session()
+_send_session.mount("https://", HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=0))
+_poll_session = requests.Session()
+_poll_session.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=2, max_retries=0))
 
 
 def log(message: str) -> None:
     line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}"
-    print(line, flush=True)
-    try:
-        with open(config.LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
+    with _log_lock:
+        print(line, flush=True)
+        try:
+            with open(config.LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
 
 
 def _url(method: str) -> str:
     return API_BASE.format(token=config.BOT_TOKEN, method=method)
 
 
+def _send_http(method: str, url: str, timeout: float, **kwargs):
+    """HTTP cho sendMessage/sendPhoto: retry 429, khong dung chung ket noi voi getUpdates."""
+    last_resp = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            last_resp = _send_session.request(method, url, timeout=timeout, **kwargs)
+        except Exception as e:
+            last_err = e
+            time.sleep(0.4 * (attempt + 1))
+            continue
+        if last_resp.status_code != 429:
+            return last_resp
+        raw = last_resp.headers.get("Retry-After", "1")
+        try:
+            wait_s = min(float(raw), 8.0)
+        except ValueError:
+            wait_s = 1.0
+        time.sleep(max(0.4, wait_s))
+    if last_resp is not None:
+        return last_resp
+    raise last_err or RuntimeError("Telegram HTTP that bai")
+
+
 def send_chat_action(chat_id: str, action: str = "typing") -> None:
     try:
-        requests.post(
+        _send_http(
+            "POST",
             _url("sendChatAction"),
-            data={"chat_id": chat_id, "action": action},
             timeout=2,
+            data={"chat_id": chat_id, "action": action},
         )
     except Exception:
         pass
@@ -60,7 +93,7 @@ def _post_message(
         data["parse_mode"] = parse_mode
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
-    resp = requests.post(_url("sendMessage"), data=data, timeout=timeout)
+    resp = _send_http("POST", _url("sendMessage"), timeout=timeout, data=data)
     try:
         result = resp.json()
     except Exception:
@@ -154,7 +187,12 @@ def mark_boot_notified() -> None:
 def clear_webhook() -> None:
     """Tranh getUpdates bi chan neu bot tung bat webhook."""
     try:
-        requests.post(_url("deleteWebhook"), data={"drop_pending_updates": "false"}, timeout=10)
+        _send_http(
+            "POST",
+            _url("deleteWebhook"),
+            timeout=10,
+            data={"drop_pending_updates": "false"},
+        )
     except Exception:
         pass
 
@@ -162,10 +200,11 @@ def clear_webhook() -> None:
 def set_my_commands(commands: list) -> bool:
     """Dang ky danh sach lenh len menu '/' cua Telegram."""
     try:
-        resp = requests.post(
+        resp = _send_http(
+            "POST",
             _url("setMyCommands"),
-            json={"commands": commands},
             timeout=15,
+            json={"commands": commands},
         )
         result = resp.json()
         if result.get("ok"):
@@ -181,11 +220,12 @@ def set_my_commands(commands: list) -> bool:
 def send_photo(chat_id: str, image_path: Path, caption: str = "") -> bool:
     try:
         with open(image_path, "rb") as f:
-            resp = requests.post(
+            resp = _send_http(
+                "POST",
                 _url("sendPhoto"),
+                timeout=30,
                 data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
                 files={"photo": f},
-                timeout=30,
             )
         try:
             result = resp.json()
@@ -203,7 +243,7 @@ def send_photo(chat_id: str, image_path: Path, caption: str = "") -> bool:
 def api_reachable(timeout: float = 5) -> bool:
     """Kiem tra api.telegram.org con ra duoc khong (sau khi bat VPN)."""
     try:
-        resp = requests.get(_url("getMe"), timeout=timeout)
+        resp = _send_http("GET", _url("getMe"), timeout=timeout)
         data = resp.json()
         return bool(data.get("ok"))
     except Exception:
@@ -212,7 +252,7 @@ def api_reachable(timeout: float = 5) -> bool:
 
 def get_updates(offset: int, timeout: int) -> dict:
     try:
-        resp = requests.post(
+        resp = _poll_session.post(
             _url("getUpdates"),
             data={
                 "offset": offset,
@@ -237,6 +277,6 @@ def answer_callback_query(callback_id: str, text: str = "") -> None:
         data = {"callback_query_id": callback_id}
         if text:
             data["text"] = str(text)[:180]
-        requests.post(_url("answerCallbackQuery"), data=data, timeout=2)
+        _send_http("POST", _url("answerCallbackQuery"), timeout=2, data=data)
     except Exception:
         pass

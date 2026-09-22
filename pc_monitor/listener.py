@@ -7,7 +7,7 @@ import sys
 import time
 import signal
 import threading
-from queue import Full, Queue
+from collections import defaultdict
 
 import requests
 
@@ -20,7 +20,12 @@ from . import updater
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
-_GROUP_QUEUES: dict[str, Queue] = {}
+MAX_INFLIGHT = 16
+_EXCLUSIVE_GROUPS = {"vpn", "update", "service", "power"}
+_group_locks = {name: threading.Lock() for name in _EXCLUSIVE_GROUPS}
+_inflight_lock = threading.Lock()
+_inflight = 0
+_group_inflight: dict[str, int] = defaultdict(int)
 _shutting_down = False
 
 
@@ -55,76 +60,92 @@ def _save_offset(offset: int) -> None:
         pass
 
 
+def _dec_inflight(group: str) -> None:
+    global _inflight
+    with _inflight_lock:
+        _inflight = max(0, _inflight - 1)
+        _group_inflight[group] = max(0, _group_inflight[group] - 1)
+
+
 def _enqueue(kind: str, chat_id: str, fn) -> None:
-    """Nhan lenh xong tra poll ngay. Moi group lenh 1 hang doi rieng."""
+    """Nhan lenh xong spawn thread ngay. Poll khong bao gio cho lenh truoc."""
+    global _inflight
     group = commands.command_group(kind)
-    queue = _GROUP_QUEUES[group]
-    waiting = queue.qsize()
+    meta = commands.GROUP_META[group]
+    label = meta["label"]
+    timeout_sec = int(meta["timeout"])
+
+    with _inflight_lock:
+        if _inflight >= MAX_INFLIGHT:
+            waiting = _inflight
+            busy = True
+        else:
+            waiting = _group_inflight[group]
+            _group_inflight[group] += 1
+            _inflight += 1
+            busy = False
+
     threading.Thread(
         target=commands.send_loading,
         args=(chat_id, kind, waiting),
         daemon=True,
         name="loading",
     ).start()
-    try:
-        queue.put_nowait((kind, chat_id, fn))
-    except Full:
-        label = commands.GROUP_META[group]["label"]
+    if busy:
         threading.Thread(
             target=telegram_api.reply,
-            args=(chat_id, f"Hang doi [{label}] day. Doi tin ket qua group nay roi gui lai. Group khac van nhan lenh."),
+            args=(
+                chat_id,
+                f"Dang co {waiting} lenh chay song song (toi da {MAX_INFLIGHT}). Gui lai sau. Lenh dang chay khong bi dung.",
+            ),
             kwargs={"parse_mode": "", "timeout": 3},
             daemon=True,
         ).start()
+        return
 
-
-def _command_worker(queue: Queue, timeout_sec: int, group: str) -> None:
-    label = commands.GROUP_META[group]["label"]
-    while True:
-        kind, chat_id, fn = queue.get()
-        done = threading.Event()
-        box: dict = {"err": None}
-
-        def _run() -> None:
-            try:
-                fn()
-            except Exception as e:
-                box["err"] = e
-            finally:
-                done.set()
-
-        threading.Thread(target=_run, daemon=True, name=f"{group}-{kind[:12]}").start()
-        finished = done.wait(timeout_sec)
-        if not finished:
-            telegram_api.log(f"Job [{label}] {kind} qua {timeout_sec}s")
+    def _job() -> None:
+        exclusive = _group_locks.get(group)
+        got_lock = True
+        try:
+            if exclusive:
+                got_lock = exclusive.acquire(timeout=timeout_sec)
+                if not got_lock:
+                    telegram_api.reply(
+                        chat_id,
+                        f"[{label}] dang chay lenh truoc trong cung group. Group khac van nhan lenh. Gui lai {kind}.",
+                        parse_mode="",
+                        timeout=5,
+                    )
+                    return
+            fn()
+        except Exception as e:
+            telegram_api.log(f"Job [{label}] {kind}: {e}")
             if chat_id:
                 telegram_api.reply(
                     chat_id,
-                    f"[{label}] {kind} chua xong sau {timeout_sec}s. Group khac van nhan lenh. Gui lai neu can.",
+                    f"Loi [{label}] {kind}: {e}\nListen van dang chay. Lenh khac khong bi anh huong.",
+                    parse_mode="",
+                )
+        finally:
+            if exclusive and got_lock:
+                exclusive.release()
+            done.set()
+            _dec_inflight(group)
+
+    def _watchdog() -> None:
+        if not done.wait(timeout_sec):
+            telegram_api.log(f"Job [{label}] {kind} qua {timeout_sec}s (lenh khac van chay)")
+            if chat_id:
+                telegram_api.reply(
+                    chat_id,
+                    f"[{label}] {kind} chua xong sau {timeout_sec}s. Lenh khac van chay doc lap. Gui lai neu can.",
                     parse_mode="",
                     timeout=5,
                 )
-        elif box["err"] and chat_id:
-            telegram_api.log(f"Worker [{label}] {kind}: {box['err']}")
-            telegram_api.reply(
-                chat_id,
-                f"Loi [{label}] {kind}: {box['err']}\nListen van dang chay.",
-                parse_mode="",
-            )
-        queue.task_done()
 
-
-def _start_group_workers() -> None:
-    for name, meta in commands.GROUP_META.items():
-        queue: Queue = Queue(maxsize=int(meta["maxsize"]))
-        _GROUP_QUEUES[name] = queue
-        threading.Thread(
-            target=_command_worker,
-            args=(queue, int(meta["timeout"]), name),
-            name=f"cmd-{name}",
-            daemon=True,
-        ).start()
-        telegram_api.log(f"Group [{meta['label']}] san sang (timeout {meta['timeout']}s)")
+    done = threading.Event()
+    threading.Thread(target=_job, daemon=True, name=f"{group}-{kind[:16]}").start()
+    threading.Thread(target=_watchdog, daemon=True, name=f"wd-{group}").start()
 
 
 def _alert_watcher_loop() -> None:
@@ -287,7 +308,7 @@ def run() -> None:
         )
 
     threading.Thread(target=_auto_update_loop, daemon=True).start()
-    _start_group_workers()
+    telegram_api.log("Lenh chay song song: moi event 1 thread, VPN/update/service chi xep hang trong group minh.")
 
     offset = _load_offset()
 
@@ -332,7 +353,11 @@ def run() -> None:
                     chat = msg.get("chat") or callback.get("from") or {}
                     chat_id = str(chat.get("id", ""))
                     data = str(callback.get("data") or "")
-                    telegram_api.answer_callback_query(cq_id, "Dang xu ly...")
+                    threading.Thread(
+                        target=telegram_api.answer_callback_query,
+                        args=(cq_id, "Dang xu ly..."),
+                        daemon=True,
+                    ).start()
                     if chat_id not in config.ALLOWED_CHAT_IDS:
                         telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
                         continue

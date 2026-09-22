@@ -7,9 +7,13 @@ khong co API chung cho ca 3 OS.
 import os
 import platform
 import subprocess
+import tempfile
+import threading
 from pathlib import Path
 
 from . import config
+
+_screenshot_lock = threading.Lock()
 
 
 def _os() -> str:
@@ -19,26 +23,30 @@ def _os() -> str:
 # --------------------------------- SCREENSHOT --------------------------------
 
 def take_screenshot() -> tuple:
-    """Chup man hinh, luu vao config.SCREENSHOT_TMP.
-    Tra ve (True, duong_dan) hoac (False, thong_bao_loi)."""
+    """Chup man hinh ra file tam (moi lan 1 file). Tra ve (True, duong_dan) hoac (False, loi)."""
     system = _os()
+    fd, tmp = tempfile.mkstemp(prefix="pcmon-shot-", suffix=".png")
+    os.close(fd)
+    path = Path(tmp)
     try:
         import mss
         import mss.tools
 
-        with mss.mss() as sct:
-            if len(sct.monitors) < 2 and system != "Windows":
-                return False, (
-                    "Khong thay man hinh de chup. "
-                    "Tren Linux can phien do hoa (X11/Wayland) dang dang nhap. "
-                    "Tren macOS can cap Screen Recording cho Python/Terminal."
-                )
-            monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-            shot = sct.grab(monitor)
-            mss.tools.to_png(shot.rgb, shot.size, output=str(config.SCREENSHOT_TMP))
+        with _screenshot_lock:
+            with mss.mss() as sct:
+                if len(sct.monitors) < 2 and system != "Windows":
+                    path.unlink(missing_ok=True)
+                    return False, (
+                        "Khong thay man hinh de chup. "
+                        "Tren Linux can phien do hoa (X11/Wayland) dang dang nhap. "
+                        "Tren macOS can cap Screen Recording cho Python/Terminal."
+                    )
+                monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                shot = sct.grab(monitor)
+                mss.tools.to_png(shot.rgb, shot.size, output=str(path))
 
-        path = Path(config.SCREENSHOT_TMP)
         if not path.exists() or path.stat().st_size < 100:
+            path.unlink(missing_ok=True)
             return False, "Chup xong nhung file anh rong — co the man hinh dang khoa hoac service khong thay desktop."
 
         # Telegram sendPhoto gioi han ~10MB; nen anh lon.
@@ -47,11 +55,15 @@ def take_screenshot() -> tuple:
             if path.stat().st_size > 3 * 1024 * 1024:
                 img = Image.open(path)
                 img = img.convert("RGB")
-                img.save(path, "JPEG", quality=70, optimize=True)
+                jpg_path = path.with_suffix(".jpg")
+                img.save(jpg_path, "JPEG", quality=70, optimize=True)
+                path.unlink(missing_ok=True)
+                path = jpg_path
         except Exception:
             pass
         return True, str(path)
     except Exception as e:
+        path.unlink(missing_ok=True)
         hint = ""
         err = str(e).lower()
         if system == "Darwin" or "screen" in err or "permission" in err:

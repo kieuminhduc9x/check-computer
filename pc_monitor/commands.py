@@ -8,6 +8,7 @@ Lenh nguy hiem (tat may / khoi dong lai) can xac nhan 2 buoc trong vong 30s.
 import time
 import threading
 from datetime import datetime
+from pathlib import Path
 import platform
 
 from . import config
@@ -219,7 +220,7 @@ def _disabled_suffix(enabled: bool) -> str:
 def build_help_text() -> str:
     lines = [
         "🤖 <b>Danh sach lenh</b>",
-        "Moi group chay doc lap: VPN khong chan screenshot, update khong chan status.",
+        "Moi lenh 1 thread: screenshot chay song song voi VPN/status. Chi VPN/update/service xep hang trong group minh.",
         "",
         "<b>[Trang thai]</b>",
         "/status — may dang bat, CPU/RAM, app dang dung, app dang mo",
@@ -385,21 +386,28 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
         telegram_api.send_message(chat_id, "Tinh nang screenshot dang bi tat (ENABLE_SCREENSHOT=false trong .env).")
         return
     telegram_api.send_chat_action(chat_id, "upload_photo")
+    path = ""
     try:
         ok, result = actions.take_screenshot()
+        if ok:
+            path = result
+            sent = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
+            if not sent:
+                telegram_api.reply(
+                    chat_id,
+                    "Da chup anh nhung khong gui duoc len Telegram (file qua lon / mat mang). Xem pc_monitor.log tren may.",
+                    parse_mode="",
+                )
+        else:
+            telegram_api.reply(chat_id, f"Loi. {result}", parse_mode="")
     except Exception as e:
         telegram_api.reply(chat_id, f"Loi /screenshot: {e}", parse_mode="")
-        return
-    if ok:
-        sent = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
-        if not sent:
-            telegram_api.reply(
-                chat_id,
-                "Da chup anh nhung khong gui duoc len Telegram (file qua lon / mat mang). Xem pc_monitor.log tren may.",
-                parse_mode="",
-            )
-    else:
-        telegram_api.reply(chat_id, f"Loi. {result}", parse_mode="")
+    finally:
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _cmd_lock(chat_id: str, args: str) -> None:
