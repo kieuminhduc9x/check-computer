@@ -10,8 +10,6 @@ import platform
 import subprocess
 from pathlib import Path
 
-from . import config
-
 
 def _os() -> str:
     return platform.system()
@@ -113,29 +111,222 @@ def _parse_text_profiles(text: str) -> list[dict]:
     return profiles
 
 
-def list_profiles() -> tuple[bool, str, list[dict]]:
+def _profile_dirs() -> list[Path]:
+    home = Path.home()
+    dirs: list[Path] = []
+    appdata = os.environ.get("APPDATA")
+    local = os.environ.get("LOCALAPPDATA")
+    programdata = os.environ.get("ProgramData", r"C:\ProgramData")
+    if appdata:
+        dirs.append(Path(appdata) / "pritunl" / "profiles")
+    if local:
+        dirs.append(Path(local) / "pritunl" / "profiles")
+    dirs.extend(
+        [
+            Path(programdata) / "Pritunl" / "Profiles",
+            Path(programdata) / "pritunl" / "profiles",
+            Path(programdata) / "Pritunl" / "profiles",
+            home / "Library" / "Application Support" / "pritunl" / "profiles",
+            home / ".config" / "pritunl" / "profiles",
+            Path("/var/lib/pritunl-client/profiles"),
+        ]
+    )
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in dirs:
+        key = str(item).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _extract_json_obj(text: str) -> dict:
+    blob = (text or "").strip()
+    if not blob:
+        return {}
     try:
-        result = _run_client(["list", "--json"])
+        data = json.loads(blob)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    start = blob.find("{")
+    end = blob.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(blob[start : end + 1])
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _meta_from_ovpn(text: str) -> dict:
+    chunks: list[str] = []
+    collecting = False
+    buf: list[str] = []
+    uv_name = ""
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("setenv UV_NAME "):
+            uv_name = stripped[len("setenv UV_NAME ") :].strip().strip('"')
+        if stripped == "#{":
+            collecting = True
+            buf = ["{"]
+            continue
+        if collecting:
+            if stripped == "#}":
+                buf.append("}")
+                chunks.append("\n".join(buf))
+                collecting = False
+                buf = []
+                continue
+            if stripped.startswith("#"):
+                buf.append(stripped[1:])
+    for chunk in chunks:
+        data = _extract_json_obj(chunk)
+        if data:
+            if uv_name and not data.get("name"):
+                data["name"] = uv_name
+            return data
+    return {"name": uv_name} if uv_name else {}
+
+
+def _display_name(data: dict, fallback: str) -> str:
+    for key in ("name", "server", "organization", "user"):
+        val = str(data.get(key) or "").strip()
+        if val:
+            return val
+    return fallback
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except Exception:
+        try:
+            return path.read_text(encoding="latin-1")
+        except Exception:
+            return ""
+
+
+def _profiles_from_disk() -> list[dict]:
+    found: dict[str, dict] = {}
+    for folder in _profile_dirs():
+        if not folder.is_dir():
+            continue
+        try:
+            files = list(folder.iterdir())
+        except OSError:
+            continue
+        for path in sorted(files):
+            if not path.is_file():
+                continue
+            suffix = path.suffix.lower()
+            if suffix not in (".conf", ".json", ".ovpn", ".pritunl"):
+                continue
+            raw = _read_text(path)
+            if suffix == ".ovpn":
+                data = _meta_from_ovpn(raw)
+            else:
+                data = _extract_json_obj(raw)
+                ovpn_blob = str(data.get("ovpn_data") or "")
+                if ovpn_blob and not data.get("name"):
+                    extra = _meta_from_ovpn(ovpn_blob)
+                    for key, val in extra.items():
+                        data.setdefault(key, val)
+            pid = str(data.get("id") or data.get("profile_id") or path.stem).strip()
+            if not pid:
+                continue
+            name = _display_name(data, path.stem)
+            key = pid.lower()
+            current = found.get(key)
+            if current is None or (name and name != path.stem and current["name"] == current["id"]):
+                found[key] = {
+                    "id": pid,
+                    "name": name or pid,
+                    "connected": _is_connected(data),
+                    "raw": data,
+                }
+    return list(found.values())
+
+
+def _cli_list_broken(text: str) -> bool:
+    low = (text or "").lower()
+    return "unmarshal" in low or "sprofile" in low
+
+
+def _short_cli_error(text: str) -> str:
+    if _cli_list_broken(text):
+        return (
+            "CLI Pritunl list bi loi tren Windows.\n"
+            "Khong doc duoc ten profile tu o dia.\n"
+            "Mo app Pritunl Client, import profile, roi gui /vpn lai."
+        )
+    line = (text or "").strip().splitlines()[0] if text else ""
+    return line[:300] or "pritunl-client list that bai"
+
+
+def _merge_profiles(disk: list[dict], cli_profiles: list[dict]) -> list[dict]:
+    if not disk:
+        return cli_profiles
+    if not cli_profiles:
+        return disk
+    by_id = {p["id"].lower(): p for p in cli_profiles}
+    out = []
+    seen: set[str] = set()
+    for item in disk:
+        key = item["id"].lower()
+        seen.add(key)
+        other = by_id.get(key)
+        if other:
+            item = dict(item)
+            item["connected"] = other["connected"]
+            if other["name"] and other["name"] != other["id"]:
+                item["name"] = other["name"]
+        out.append(item)
+    for item in cli_profiles:
+        if item["id"].lower() not in seen:
+            out.append(item)
+    return out
+
+
+def list_profiles() -> tuple[bool, str, list[dict]]:
+    disk = _profiles_from_disk()
+    cli_profiles: list[dict] = []
+    err = ""
+    try:
+        result = _run_client(["list", "--json"], timeout=12)
         blob = (result.stdout or "").strip()
         if result.returncode == 0 and blob.startswith(("{", "[")):
-            profiles = _parse_json_profiles(blob)
-            if profiles:
-                return True, "", profiles
-        result = _run_client(["list"])
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or "").strip()
-            return False, err or f"pritunl-client list that bai ({result.returncode})", []
-        profiles = _parse_text_profiles(result.stdout or "")
-        return True, "", profiles
+            cli_profiles = _parse_json_profiles(blob)
+        stderr = (result.stderr or result.stdout or "")
+        if not cli_profiles and not _cli_list_broken(stderr):
+            result = _run_client(["list"], timeout=12)
+            if result.returncode == 0:
+                cli_profiles = _parse_text_profiles(result.stdout or "")
+            stderr = (result.stderr or result.stdout or "")
+        if not cli_profiles:
+            err = _short_cli_error(stderr)
     except FileNotFoundError:
+        if disk:
+            return True, "", disk
         return False, (
             "Chua cai Pritunl Client hoac khong tim thay CLI.\n"
             "Windows: C:\\Program Files (x86)\\Pritunl\\pritunl-client.exe"
         ), []
     except subprocess.TimeoutExpired:
-        return False, "pritunl-client het thoi gian.", []
+        err = "pritunl-client het thoi gian."
     except Exception as e:
-        return False, str(e), []
+        err = str(e)[:200]
+    profiles = _merge_profiles(disk, cli_profiles)
+    if profiles:
+        return True, "", profiles
+    return False, err or (
+        "Khong tim thay profile Pritunl.\n"
+        "Mo app Pritunl Client, import VPN, roi gui /vpn lai."
+    ), []
 
 
 def match_profile(query: str, profiles: list[dict]) -> dict | None:
@@ -231,8 +422,8 @@ def format_list_text(profiles: list[dict]) -> str:
         state = "🟢 connected" if p["connected"] else "⚪ disconnected"
         short = p["id"][:8]
         lines.append(f"- {_html(p['name'])}  <code>{_html(short)}</code>  {state}")
-    lines.append("Bật tat ca: /vpn_on   |  Tắt tat ca: /vpn_off")
-    lines.append("Mot profile: /vpn_on ten_hoac_id")
+    lines.append("Bam nut Bat ... hoac gui /vpn_on ten")
+    lines.append("Tat ca: /vpn_on    |    /vpn_off")
     return "\n".join(lines)
 
 
