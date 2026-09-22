@@ -5,6 +5,8 @@ Moi lenh la 1 ham nhan (chat_id) va tu gui phan hoi qua telegram_api.
 Lenh nguy hiem (tat may / khoi dong lai) can xac nhan 2 buoc trong vong 30s.
 """
 
+from __future__ import annotations
+
 import time
 import threading
 from datetime import datetime
@@ -129,23 +131,80 @@ def group_label(kind: str) -> str:
     return GROUP_META[command_group(kind)]["label"]
 
 
-def loading_text(kind: str, waiting: int = 0) -> str:
+def _cmd_display(kind: str) -> str:
     key = _norm_loading_key(kind)
-    group = command_group(kind)
-    label = GROUP_META[group]["label"]
-    action = _LOADING.get(key) or f"dang xu ly {kind or 'lenh'}"
-    line = f"[{label}] Dang nhan lenh. {action}..."
-    if waiting > 0:
-        line += f" Hang doi {label}: {waiting} lenh truoc (group khac van chay)."
-    return line
+    if not key:
+        return kind or "lenh"
+    if kind.lower().startswith("nut:"):
+        return key
+    return f"/{key}"
+
+
+def tracker_text(
+    kind: str,
+    state: str,
+    waiting: int = 0,
+    elapsed: float = 0,
+    err: str | None = None,
+    timeout_sec: int = 0,
+) -> str:
+    label = group_label(kind)
+    cmd = _cmd_display(kind)
+    key = _norm_loading_key(kind)
+    action = _LOADING.get(key) or f"dang xu ly {cmd}"
+    if state == "received":
+        line = f"[{label}] PC DA NHAN {cmd}\nDang: {action}..."
+        if waiting > 0:
+            line += f"\nHang doi {label}: {waiting} lenh truoc."
+        return line
+    if state == "waiting":
+        return f"[{label}] PC DA NHAN {cmd}\nDang cho lenh {label} truoc xong..."
+    if state == "timeout":
+        return (
+            f"[{label}] {cmd} CHUA XONG sau {timeout_sec}s\n"
+            "PC van dang chay. Tin nay se doi thanh XONG/LOI khi ket thuc."
+        )
+    if state == "err":
+        detail = (str(err)[:300] if err else "loi khong ro")
+        return f"[{label}] {cmd} LOI ({elapsed:.0f}s)\n{detail}"
+    return f"[{label}] {cmd} XONG ({elapsed:.0f}s)"
+
+
+def send_tracker(chat_id: str, kind: str, waiting: int = 0) -> int:
+    """Tin vong doi: PC da nhan. Tra ve message_id de sua thanh XONG/LOI."""
+    text = tracker_text(kind, "received", waiting=waiting)
+    for _ in range(3):
+        mid = telegram_api.send_plain(chat_id, text, timeout=6)
+        if mid:
+            return mid
+        time.sleep(0.5)
+    telegram_api.log(f"Khong gui duoc tracker {kind} toi {chat_id}")
+    return 0
+
+
+def finish_tracker(
+    chat_id: str,
+    message_id: int,
+    kind: str,
+    state: str,
+    elapsed: float = 0,
+    err: str | None = None,
+    timeout_sec: int = 0,
+) -> None:
+    text = tracker_text(
+        kind,
+        state,
+        elapsed=elapsed,
+        err=err,
+        timeout_sec=timeout_sec,
+    )
+    if message_id and telegram_api.edit_message(chat_id, message_id, text, timeout=6):
+        return
+    telegram_api.reply(chat_id, text, parse_mode="", timeout=6)
 
 
 def send_loading(chat_id: str, kind: str, waiting: int = 0) -> bool:
-    text = loading_text(kind, waiting)
-    sent = telegram_api.reply(chat_id, text, parse_mode="", timeout=3)
-    if not sent:
-        telegram_api.log(f"Khong gui duoc tin loading {kind} toi {chat_id}")
-    return sent
+    return bool(send_tracker(chat_id, kind, waiting))
 
 
 def _reply(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
@@ -267,7 +326,7 @@ def build_help_text() -> str:
         "<b>[Menu]</b>",
         "/help — xem lai danh sach nay",
         "",
-        "Tin loading se co nhan group, vi du [VPN] / [Chup man hinh].",
+        "Tin tracker: PC DA NHAN -> XONG / LOI / CHUA XONG. Biet lenh da toi may va khi nao ket thuc.",
         "Neu may da tat, moi lenh se khong co phan hoi.",
     ]
     return "\n".join(lines)

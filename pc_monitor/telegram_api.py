@@ -95,7 +95,7 @@ def _post_message(
     parse_mode: str = "",
     reply_markup: dict | None = None,
     timeout: int = 15,
-) -> bool:
+) -> tuple[bool, int]:
     data = {"chat_id": chat_id, "text": str(text)[:4000] or "(trong)"}
     if parse_mode:
         data["parse_mode"] = parse_mode
@@ -106,7 +106,51 @@ def _post_message(
         result = resp.json()
     except Exception:
         result = {}
-    return bool(result.get("ok"))
+    mid = 0
+    if result.get("ok"):
+        try:
+            mid = int((result.get("result") or {}).get("message_id") or 0)
+        except (TypeError, ValueError):
+            mid = 0
+    return bool(result.get("ok")), mid
+
+
+def send_plain(chat_id: str, text: str, timeout: int = 6) -> int:
+    """Gui text thuong, tra ve message_id (0 neu that bai)."""
+    try:
+        ok, mid = _post_message(chat_id, text, parse_mode="", timeout=timeout)
+        return mid if ok else 0
+    except Exception as e:
+        log(f"send_plain that bai: {e}")
+        return 0
+
+
+def edit_message(chat_id: str, message_id: int, text: str, timeout: int = 6) -> bool:
+    """Sua tin tracker (received -> xong/loi)."""
+    if not message_id:
+        return False
+    try:
+        resp = _send_http(
+            "POST",
+            _url("editMessageText"),
+            timeout=timeout,
+            data={
+                "chat_id": chat_id,
+                "message_id": int(message_id),
+                "text": str(text)[:4000] or "(trong)",
+            },
+        )
+        result = resp.json()
+        if result.get("ok"):
+            return True
+        desc = str(result.get("description") or "")
+        if "message is not modified" in desc.lower():
+            return True
+        log(f"editMessage loi: {result}")
+        return False
+    except Exception as e:
+        log(f"editMessage that bai: {e}")
+        return False
 
 
 def send_message(
@@ -121,17 +165,17 @@ def send_message(
         text = "(trong)"
     text = str(text)[:4000]
     try:
-        if _post_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup, timeout=timeout):
+        if _post_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup, timeout=timeout)[0]:
             return True
         log("Telegram loi sendMessage, thu gui text thuong.")
-        if _post_message(chat_id, _strip_html(text), parse_mode="", timeout=min(timeout, 8)):
+        if _post_message(chat_id, _strip_html(text), parse_mode="", timeout=min(timeout, 8))[0]:
             return True
         log("Telegram van loi khi gui tin nhan.")
         return False
     except Exception as e:
         log(f"Loi khi gui tin nhan: {e}")
         try:
-            return _post_message(chat_id, _strip_html(text)[:500], parse_mode="", timeout=5)
+            return _post_message(chat_id, _strip_html(text)[:500], parse_mode="", timeout=5)[0]
         except Exception as e2:
             log(f"Gui tin nhan that bai lan cuoi: {e2}")
             return False

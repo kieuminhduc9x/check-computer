@@ -99,45 +99,63 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
 
     def _job() -> None:
         exclusive = _group_locks.get(group)
-        got_lock = True
+        got_lock = False
+        started = time.monotonic()
         try:
-            commands.send_loading(chat_id, kind, waiting)
+            mid = commands.send_tracker(chat_id, kind, waiting)
+            box["mid"] = mid
             if exclusive:
-                got_lock = exclusive.acquire(timeout=timeout_sec)
+                got_lock = exclusive.acquire(blocking=False)
                 if not got_lock:
-                    telegram_api.reply(
-                        chat_id,
-                        f"[{label}] dang chay lenh truoc trong cung group. Group khac van nhan lenh. Gui lai {kind}.",
-                        parse_mode="",
-                        timeout=5,
+                    commands.finish_tracker(
+                        chat_id, mid, kind, "waiting", elapsed=time.monotonic() - started
                     )
-                    return
+                    got_lock = exclusive.acquire(timeout=timeout_sec)
+                    if not got_lock:
+                        box["status"] = "err"
+                        box["err"] = (
+                            f"Group {label} dang chay lenh truoc. "
+                            f"Group khac van nhan lenh. Gui lai {kind}."
+                        )
+                        return
+                    commands.finish_tracker(chat_id, mid, kind, "received", waiting=0)
             fn()
+            box["status"] = "ok"
         except Exception as e:
+            box["status"] = "err"
+            box["err"] = e
             telegram_api.log(f"Job [{label}] {kind}: {e}")
-            if chat_id:
-                telegram_api.reply(
-                    chat_id,
-                    f"Loi [{label}] {kind}: {e}\nListen van dang chay. Lenh khac khong bi anh huong.",
-                    parse_mode="",
-                )
         finally:
             if exclusive and got_lock:
                 exclusive.release()
+            elapsed = time.monotonic() - started
+            if box["status"] == "ok":
+                commands.finish_tracker(chat_id, box.get("mid") or 0, kind, "ok", elapsed=elapsed)
+            elif box["status"] == "err":
+                commands.finish_tracker(
+                    chat_id,
+                    box.get("mid") or 0,
+                    kind,
+                    "err",
+                    elapsed=elapsed,
+                    err=str(box.get("err") or "loi"),
+                )
             done.set()
             _dec_inflight(group)
 
     def _watchdog() -> None:
         if not done.wait(timeout_sec):
             telegram_api.log(f"Job [{label}] {kind} qua {timeout_sec}s (lenh khac van chay)")
-            if chat_id:
-                telegram_api.reply(
+            if box["status"] not in ("ok", "err"):
+                commands.finish_tracker(
                     chat_id,
-                    f"[{label}] {kind} chua xong sau {timeout_sec}s. Lenh khac van chay doc lap. Gui lai neu can.",
-                    parse_mode="",
-                    timeout=5,
+                    box.get("mid") or 0,
+                    kind,
+                    "timeout",
+                    timeout_sec=timeout_sec,
                 )
 
+    box: dict = {"mid": 0, "status": "pending", "err": None}
     done = threading.Event()
     threading.Thread(target=_job, daemon=True, name=f"{group}-{kind[:16]}").start()
     threading.Thread(target=_watchdog, daemon=True, name=f"wd-{group}").start()
