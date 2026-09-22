@@ -7,7 +7,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import socket
 import subprocess
+import urllib.error
+import urllib.request
+from http.client import HTTPConnection
 from pathlib import Path
 
 
@@ -42,21 +46,104 @@ def _client_bin() -> str | None:
     return None
 
 
-def _run_client(args: list[str], timeout: int = 45) -> subprocess.CompletedProcess:
+def _run_client(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess:
     bin_path = _client_bin()
     if not bin_path:
         raise FileNotFoundError("Khong tim thay pritunl-client")
-    return subprocess.run(
-        [bin_path, *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    kwargs: dict = {
+        "args": [bin_path, *args],
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+        "stdin": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return subprocess.run(**kwargs)
 
 
 def _mode() -> str:
     val = (os.getenv("PRITUNL_MODE") or "ovpn").strip().lower()
     return val if val in ("ovpn", "wg") else "ovpn"
+
+
+def _auth_key() -> str:
+    programdata = os.environ.get("ProgramData", r"C:\ProgramData")
+    for path in (
+        Path(programdata) / "Pritunl" / "auth",
+        Path("/var/run/pritunl.auth"),
+        Path("/var/run/pritunl"),
+    ):
+        try:
+            if path.is_file():
+                return path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+    return ""
+
+
+class _UnixHTTPConnection(HTTPConnection):
+    def __init__(self, sock_path: str, timeout: float = 8):
+        super().__init__("localhost", timeout=timeout)
+        self._sock_path = sock_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._sock_path)
+
+
+def _service_call(method: str, path: str, body: dict | None = None, timeout: int = 8) -> tuple[int, str]:
+    """Goi Pritunl service local (Windows :9770, mac/Linux unix socket)."""
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {
+        "User-Agent": "pritunl",
+        "Content-Type": "application/json",
+        "Auth-Key": _auth_key(),
+    }
+    sock = "/var/run/pritunl.sock"
+    if _os() != "Windows" and Path(sock).exists():
+        conn = _UnixHTTPConnection(sock, timeout=timeout)
+        try:
+            conn.request(method, path, body=payload, headers=headers)
+            resp = conn.getresponse()
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+        finally:
+            conn.close()
+    url = "http://127.0.0.1:9770" + path
+    req = urllib.request.Request(url, data=payload, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.getcode() or 200, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        return e.code, raw or str(e)
+    except Exception as e:
+        return 0, str(e)
+
+
+def _connection_map() -> dict[str, dict]:
+    code, raw = _service_call("GET", "/profile")
+    if code != 200 or not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if isinstance(data, dict):
+        out = {}
+        for key, val in data.items():
+            if isinstance(val, dict):
+                out[str(key).lower()] = val
+        return out
+    return {}
+
+
+def _is_status_connected(item: dict) -> bool:
+    text = str(item.get("status") or item.get("state") or "").strip().lower()
+    return text in ("connected", "connecting", "authenticating", "reconnecting", "active")
 
 
 def _is_connected(profile: dict) -> bool:
@@ -240,15 +327,27 @@ def _profiles_from_disk() -> list[dict]:
             if not pid:
                 continue
             name = _display_name(data, path.stem)
+            ovpn_data = ""
+            if suffix == ".ovpn":
+                ovpn_data = raw
+            else:
+                ovpn_data = str(data.get("ovpn_data") or "")
+                sibling = path.with_suffix(".ovpn")
+                if not ovpn_data and sibling.exists():
+                    ovpn_data = _read_text(sibling)
             key = pid.lower()
             current = found.get(key)
-            if current is None or (name and name != path.stem and current["name"] == current["id"]):
+            better = current is None or (name and name != path.stem and current["name"] == current["id"])
+            if better:
                 found[key] = {
                     "id": pid,
                     "name": name or pid,
                     "connected": _is_connected(data),
                     "raw": data,
+                    "ovpn_data": ovpn_data,
                 }
+            elif current is not None and ovpn_data and not current.get("ovpn_data"):
+                current["ovpn_data"] = ovpn_data
     return list(found.values())
 
 
@@ -294,24 +393,31 @@ def _merge_profiles(disk: list[dict], cli_profiles: list[dict]) -> list[dict]:
 
 def list_profiles() -> tuple[bool, str, list[dict]]:
     disk = _profiles_from_disk()
-    cli_profiles: list[dict] = []
+    live = _connection_map()
+    for item in disk:
+        info = live.get(item["id"].lower())
+        if info:
+            item["connected"] = _is_status_connected(info)
+    if disk:
+        return True, "", disk
     err = ""
     try:
-        result = _run_client(["list", "--json"], timeout=12)
+        result = _run_client(["list", "--json"], timeout=8)
         blob = (result.stdout or "").strip()
         if result.returncode == 0 and blob.startswith(("{", "[")):
-            cli_profiles = _parse_json_profiles(blob)
+            profiles = _parse_json_profiles(blob)
+            if profiles:
+                return True, "", profiles
         stderr = (result.stderr or result.stdout or "")
-        if not cli_profiles and not _cli_list_broken(stderr):
-            result = _run_client(["list"], timeout=12)
+        if not _cli_list_broken(stderr):
+            result = _run_client(["list"], timeout=8)
             if result.returncode == 0:
-                cli_profiles = _parse_text_profiles(result.stdout or "")
+                profiles = _parse_text_profiles(result.stdout or "")
+                if profiles:
+                    return True, "", profiles
             stderr = (result.stderr or result.stdout or "")
-        if not cli_profiles:
-            err = _short_cli_error(stderr)
+        err = _short_cli_error(stderr)
     except FileNotFoundError:
-        if disk:
-            return True, "", disk
         return False, (
             "Chua cai Pritunl Client hoac khong tim thay CLI.\n"
             "Windows: C:\\Program Files (x86)\\Pritunl\\pritunl-client.exe"
@@ -320,9 +426,6 @@ def list_profiles() -> tuple[bool, str, list[dict]]:
         err = "pritunl-client het thoi gian."
     except Exception as e:
         err = str(e)[:200]
-    profiles = _merge_profiles(disk, cli_profiles)
-    if profiles:
-        return True, "", profiles
     return False, err or (
         "Khong tim thay profile Pritunl.\n"
         "Mo app Pritunl Client, import VPN, roi gui /vpn lai."
@@ -339,41 +442,99 @@ def match_profile(query: str, profiles: list[dict]) -> dict | None:
     hits = [p for p in profiles if p["id"].lower().startswith(q) or q in p["name"].lower()]
     if len(hits) == 1:
         return hits[0]
-    return None
+    if not hits:
+        return None
+    named = [p for p in hits if p["name"].lower() != p["id"].lower()]
+    if len(named) == 1:
+        return named[0]
+    hits.sort(key=lambda p: len(p["id"]), reverse=True)
+    return hits[0]
+
+
+def _find_disk_profile(profile_id: str) -> dict:
+    q = profile_id.strip().lower()
+    profiles = _profiles_from_disk()
+    hit = match_profile(q, profiles)
+    return hit or {"id": profile_id, "name": profile_id, "raw": {}, "ovpn_data": ""}
+
+
+def _password() -> str:
+    return (os.getenv("PRITUNL_PASSWORD") or "").strip()
+
+
+def _short_err(text: str) -> str:
+    blob = (text or "").strip()
+    if _cli_list_broken(blob):
+        return "CLI Pritunl list/start bi loi tren Windows. Da thu API local."
+    line = blob.splitlines()[0] if blob else ""
+    return line[:240] or "that bai"
 
 
 def start_profile(profile_id: str) -> tuple[bool, str]:
-    args = ["start", profile_id, "--mode", _mode()]
-    password = (os.getenv("PRITUNL_PASSWORD") or "").strip()
+    profile = _find_disk_profile(profile_id)
+    pid = profile["id"]
+    name = profile.get("name") or pid
+    password = _password()
+    raw = profile.get("raw") or {}
+    ovpn = str(profile.get("ovpn_data") or raw.get("ovpn_data") or "")
+    username = (os.getenv("PRITUNL_USERNAME") or str(raw.get("user") or "pritunl")).strip() or "pritunl"
+    payload = {
+        "id": pid,
+        "mode": _mode(),
+        "reconnect": True,
+        "timeout": True,
+        "username": username,
+        "password": password,
+        "data": ovpn,
+    }
+    code, body = _service_call("POST", "/profile", payload, timeout=15)
+    if 200 <= code < 300:
+        extra = ""
+        if not password:
+            extra = " Neu VPN hoi PIN/OTP, dien PRITUNL_PASSWORD trong .env."
+        return True, f"Da gui lenh bat {name} ({_mode()}).{extra}"
+    if code == 0:
+        service_err = f"Khong noi duoc Pritunl service ({body}). Mo app Pritunl Client tren PC."
+    elif code in (401, 403):
+        service_err = "Khong xac thuc duoc Pritunl service (file auth). Mo app Pritunl Client roi thu lai."
+    else:
+        service_err = _short_err(body) or f"HTTP {code}"
+
+    args = ["start", pid, f"--mode={_mode()}"]
     if password:
         args.extend(["--password", password])
     try:
-        result = _run_client(args, timeout=60)
-    except FileNotFoundError as e:
-        return False, str(e)
+        result = _run_client(args, timeout=20)
+        if result.returncode == 0:
+            return True, f"Da bat {name} bang CLI ({_mode()})"
+        err = _short_err((result.stderr or result.stdout or "") or service_err)
+    except FileNotFoundError:
+        err = service_err
     except subprocess.TimeoutExpired:
-        return False, f"Het thoi gian khi bat profile {profile_id}"
-    if result.returncode == 0:
-        return True, f"Da bat profile {profile_id} ({_mode()})"
-    err = (result.stderr or result.stdout or "").strip()
-    hint = ""
+        err = f"Het thoi gian khi bat {name}. {service_err}"
+    except Exception as e:
+        err = f"{e}. {service_err}"
     low = err.lower()
     if "password" in low or "auth" in low or "otp" in low or "pin" in low:
-        hint = " Profile can mat khau/OTP — dien PRITUNL_PASSWORD trong .env (khong commit)."
-    return False, (err or f"start that bai ({result.returncode})") + hint
+        err += " Dien PRITUNL_PASSWORD trong .env (khong commit)."
+    return False, err
 
 
 def stop_profile(profile_id: str) -> tuple[bool, str]:
+    profile = _find_disk_profile(profile_id)
+    pid = profile["id"]
+    name = profile.get("name") or pid
+    code, body = _service_call("DELETE", "/profile", {"id": pid}, timeout=10)
+    if 200 <= code < 300:
+        return True, f"Da gui lenh tat {name}."
     try:
-        result = _run_client(["stop", profile_id], timeout=45)
-    except FileNotFoundError as e:
-        return False, str(e)
-    except subprocess.TimeoutExpired:
-        return False, f"Het thoi gian khi tat profile {profile_id}"
-    if result.returncode == 0:
-        return True, f"Da tat profile {profile_id}"
-    err = (result.stderr or result.stdout or "").strip()
-    return False, err or f"stop that bai ({result.returncode})"
+        result = _run_client(["stop", pid], timeout=15)
+        if result.returncode == 0:
+            return True, f"Da tat {name} bang CLI."
+        err = _short_err(result.stderr or result.stdout or body)
+    except Exception as e:
+        err = _short_err(body) or str(e)
+    return False, err or f"Khong tat duoc {name}"
 
 
 def start_all() -> tuple[bool, str]:

@@ -395,7 +395,9 @@ def _cmd_service(chat_id: str, args: str) -> None:
         _cmd_reload(chat_id, "")
         return
     telegram_api.log(f"Nhan /service tu {chat_id}")
-    try:
+    telegram_api.reply(chat_id, "Dang kiem tra service...", parse_mode="")
+
+    def _run() -> None:
         text = autostart.status_text(fast=True)
         plain = (
             text.replace("<b>", "")
@@ -403,16 +405,16 @@ def _cmd_service(chat_id: str, args: str) -> None:
             .replace("<code>", "")
             .replace("</code>", "")
         )
-        sent = telegram_api.send_message(chat_id, plain, parse_mode="")
+        sent = telegram_api.reply(chat_id, plain, parse_mode="")
         if not sent:
-            telegram_api.send_message(
+            telegram_api.reply(
                 chat_id,
                 "SERVICE: listen dang tra loi. Autostart: xem file Startup "
-                "(PCMonitorPro_Listener.vbs). Chi tiet: python main.py service",
+                "(PCMonitorPro_Listener.vbs).",
                 parse_mode="",
             )
-    except Exception as e:
-        telegram_api.send_message(chat_id, f"Loi /service: {e}", parse_mode="")
+
+    _bg(chat_id, "/service", _run)
 
 
 def _cmd_update(chat_id: str, args: str) -> None:

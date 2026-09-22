@@ -58,13 +58,18 @@ def _project_dir() -> Path:
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=kwargs.pop("timeout", 30),
-        **kwargs,
-    )
+    extra: dict = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": kwargs.pop("timeout", 30),
+        "stdin": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        extra["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    extra.update(kwargs)
+    return subprocess.run(cmd, **extra)
 
 
 def _fill_template(template: Path, dest: Path, mapping: dict[str, str]) -> None:
@@ -917,7 +922,7 @@ def is_registered() -> tuple[bool, str]:
         return False, str(e)
 
 
-def _is_autostart_registered() -> tuple[bool, str]:
+def _is_autostart_registered(*, skip_schtasks: bool = False) -> tuple[bool, str]:
     """Listener co duoc dang ky chay luc dang nhap khong."""
     system = _os()
     if system == "Windows":
@@ -925,6 +930,8 @@ def _is_autostart_registered() -> tuple[bool, str]:
         startup_cmd = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
         if startup.exists() or startup_cmd.exists():
             return True, "Thu muc Startup (chay an luc dang nhap)"
+        if skip_schtasks:
+            return False, "Khong thay file Startup (bo qua Task Scheduler de khong treo)"
         task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"], timeout=2)
         if task.returncode == 0:
             return True, "Task Scheduler: PCMonitorPro_Listener"
@@ -948,7 +955,7 @@ def _is_autostart_registered() -> tuple[bool, str]:
 def status_text(*, fast: bool = True) -> str:
     system = _os()
     try:
-        ok, detail = _is_autostart_registered()
+        ok, detail = _is_autostart_registered(skip_schtasks=fast)
     except Exception as e:
         ok, detail = False, str(e)
     try:
