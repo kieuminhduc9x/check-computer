@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import sys
 import json
+import time
+import signal
 import platform
 import subprocess
 from pathlib import Path
@@ -677,32 +679,148 @@ def uninstall() -> tuple[bool, str]:
         return False, f"Loi khi go service: {e}"
 
 
+def takeover_requested() -> bool:
+    path = config.TAKEOVER_FILE
+    if not path.exists():
+        return False
+    try:
+        ts = float(path.read_text(encoding="utf-8").strip())
+        return (time.time() - ts) < 45
+    except Exception:
+        return False
+
+
+def _is_project_listen(proc, project: str) -> bool:
+    try:
+        parts = [str(x) for x in (proc.cmdline() or [])]
+    except Exception:
+        return False
+    if "listen" not in parts:
+        return False
+    if not any("main.py" in p.replace("\\", "/") for p in parts):
+        return False
+    proj = str(Path(project).resolve()).replace("\\", "/").rstrip("/").lower()
+    joined = " ".join(parts).replace("\\", "/").lower()
+    if proj in joined:
+        return True
+    try:
+        cwd = str(Path(proc.cwd()).resolve()).replace("\\", "/").rstrip("/").lower()
+        return cwd == proj
+    except Exception:
+        return False
+
+
+def _other_listener_pids() -> list[int]:
+    try:
+        import psutil
+    except ImportError:
+        return []
+    me = os.getpid()
+    project = str(_project_dir().resolve())
+    pids = []
+    try:
+        for proc in psutil.process_iter(["pid"]):
+            try:
+                pid = proc.info.get("pid")
+                if not pid or pid == me:
+                    continue
+                if _is_project_listen(proc, project):
+                    pids.append(int(pid))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except (psutil.AccessDenied, PermissionError):
+        return pids
+    return pids
+
+
+def _pause_managed_listener() -> list[str]:
+    """Dung process do OS giu, giu lich dang ky cho lan dang nhap sau."""
+    notes = []
+    system = _os()
+    if system == "Windows":
+        result = _schtasks(["/End", "/TN", "PCMonitorPro_Listener"])
+        if result.returncode == 0:
+            notes.append("Da dung task PCMonitorPro_Listener (lich van giu)")
+        return notes
+    if system == "Darwin":
+        _, domain = _macos_uid_domain()
+        result = _macos_launchctl(["bootout", f"{domain}/com.pcmonitor.listener"])
+        if result.returncode == 0:
+            notes.append("Da unload launchd listener trong phien nay")
+        return notes
+    if system == "Linux":
+        result = _systemctl(["stop", "pcmonitor-listener.service"])
+        if result.returncode == 0:
+            notes.append("Da stop systemd listener (van enable)")
+    return notes
+
+
+def _force_kill(pid: int) -> None:
+    if _os() == "Windows":
+        _run(["taskkill", "/PID", str(pid), "/F", "/T"])
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def takeover_existing_listener() -> str:
+    """Ghi de listen cu (service an / terminal cu). Khong can admin."""
+    try:
+        config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+    notes = _pause_managed_listener()
+    pids = _other_listener_pids()
+    if pids:
+        try:
+            import psutil
+        except ImportError:
+            psutil = None
+        for pid in pids:
+            try:
+                if psutil:
+                    psutil.Process(pid).terminate()
+                else:
+                    os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+        time.sleep(1.5)
+        for pid in list(pids):
+            still = False
+            if psutil:
+                still = psutil.pid_exists(pid)
+            else:
+                try:
+                    os.kill(pid, 0)
+                    still = True
+                except OSError:
+                    still = False
+            if still:
+                _force_kill(pid)
+        time.sleep(1.0)
+        notes.append("Da tat listen cu: " + ", ".join(f"PID {p}" for p in pids))
+    else:
+        notes.append("Khong thay listen cu")
+    try:
+        config.TAKEOVER_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        config.LISTENER_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+    return "; ".join(notes)
+
+
 def is_listener_running() -> tuple[bool, str]:
     """Process 'main.py listen' co dang chay khong (khac voi da dang ky autostart)."""
     if running_as_listener():
         return True, f"Dang chay trong process nay (PID {os.getpid()})"
-    try:
-        import psutil
-    except ImportError:
-        return False, "Khong kiem tra duoc (thieu psutil)"
-
-    project = str(_project_dir().resolve())
-    hits = []
-    try:
-        for proc in psutil.process_iter(["pid", "cmdline"]):
-            try:
-                cmd = proc.info.get("cmdline") or []
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-            joined = " ".join(str(x) for x in cmd)
-            if "main.py" in joined and "listen" in joined:
-                if project.replace("\\", "/").lower() in joined.replace("\\", "/").lower() or len(hits) == 0:
-                    hits.append(f"PID {proc.info.get('pid')}")
-    except (psutil.AccessDenied, PermissionError):
-        return False, "Khong du quyen doc danh sach process"
-
-    if hits:
-        return True, "Process listen: " + ", ".join(hits[:5])
+    pids = _other_listener_pids()
+    if pids:
+        return True, "Process listen: " + ", ".join(f"PID {p}" for p in pids[:5])
     return False, "Khong thay process main.py listen"
 
 

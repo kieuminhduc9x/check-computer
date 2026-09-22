@@ -70,6 +70,8 @@ LOG_FILE = PROJECT_ROOT / "pc_monitor.log"
 OFFSET_FILE = PROJECT_ROOT / ".update_offset"
 SCREENSHOT_TMP = PROJECT_ROOT / ".last_screenshot.png"
 READY_STAMP_FILE = PROJECT_ROOT / ".last_ready_notify"
+LISTENER_PID_FILE = PROJECT_ROOT / ".listener.pid"
+TAKEOVER_FILE = PROJECT_ROOT / ".listener.takeover"
 
 
 def validate(exit_on_error: bool = True) -> list:

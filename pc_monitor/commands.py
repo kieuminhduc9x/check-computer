@@ -225,7 +225,11 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
             "<code>python main.py install</code>.",
         )
     ok, msg = autostart.install(start_listener_now=False)
-    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + msg.replace("&", "&amp;").replace("<", "&lt;"))
+    prefix = (
+        "Chi dang ky lich khoi dong, <b>giu listen hien tai</b> "
+        "(khong mo process thu 2 — tranh loi getUpdates Conflict).\n"
+    )
+    telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + prefix + msg.replace("&", "&amp;").replace("<", "&lt;"))
 
 
 def _cmd_autostart_off(chat_id: str, args: str) -> None:

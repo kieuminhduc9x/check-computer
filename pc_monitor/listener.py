@@ -25,6 +25,9 @@ def _handle_termination_signal(signum, frame) -> None:
     may / khoi dong lai / dang xuat. Bat tin hieu nay de bao qua Telegram
     TRUOC KHI tien trinh bi dung, tuong tu Event ID 1074 tren Windows."""
     global _shutting_down
+    if autostart.takeover_requested():
+        telegram_api.log(f"Nhan tin hieu {signum}: instance moi ghi de — thoat, khong gui shutdown.")
+        raise SystemExit(0)
     _shutting_down = True
     telegram_api.log(f"Nhan tin hieu dung (signal {signum}) -> gui thong bao shutdown")
     for chat_id in config.ALLOWED_CHAT_IDS:
@@ -116,6 +119,8 @@ def _notify_service_ready() -> None:
 def run() -> None:
     config.validate()
     autostart.mark_listener_role()
+    takeover_note = autostart.takeover_existing_listener()
+    telegram_api.log(f"Ghi de listen cu (khong can admin): {takeover_note}")
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
@@ -154,7 +159,15 @@ def run() -> None:
             continue
 
         if not result.get("ok"):
-            telegram_api.log(f"Telegram tra ve loi: {result}. Thu lai sau {RETRY_SLEEP_SEC}s")
+            desc = str(result.get("description") or result)
+            if "terminated by other getUpdates" in desc or "Conflict" in desc:
+                telegram_api.log(
+                    "Telegram Conflict: con listen khac cung BOT_TOKEN "
+                    "(service an / terminal khac / may khac). Dang ghi de tren may nay..."
+                )
+                telegram_api.log(autostart.takeover_existing_listener())
+            else:
+                telegram_api.log(f"Telegram tra ve loi: {result}. Thu lai sau {RETRY_SLEEP_SEC}s")
             time.sleep(RETRY_SLEEP_SEC)
             continue
 
