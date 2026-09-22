@@ -49,6 +49,11 @@ _LOADING = {
     "procs": "dang liet ke tien trinh",
     "apps": "dang liet ke ung dung dang mo",
     "windows": "dang liet ke cua so",
+    "software": "dang liet ke phan mem da cai",
+    "installed": "dang liet ke phan mem da cai",
+    "programs": "dang liet ke phan mem da cai",
+    "open": "dang mo ung dung",
+    "run": "dang mo ung dung",
     "ip": "dang lay dia chi IP",
     "screenshot": "dang chup man hinh",
     "lock": "dang khoa man hinh",
@@ -92,6 +97,8 @@ def _norm_loading_key(kind: str) -> str:
         return "confirm_shutdown"
     if key.startswith("confirm_restart"):
         return "confirm_restart"
+    if key.startswith("o:"):
+        return "open"
     if key.startswith("confirm_close"):
         return "confirm_close_apps"
     return key
@@ -104,7 +111,7 @@ def command_group(kind: str) -> str:
         return "vpn"
     if key.startswith("screenshot"):
         return "screen"
-    if key.startswith(("apps", "windows", "close", "lock", "confirm_close")):
+    if key.startswith(("apps", "windows", "close", "lock", "confirm_close", "software", "installed", "programs", "open", "run")):
         return "apps"
     if key.startswith((
         "shutdown",
@@ -296,6 +303,9 @@ def build_help_text() -> str:
         "<b>[Ung dung]</b>",
         "/apps — danh sach ung dung / cua so dang mo",
         "/windows — giong /apps",
+        "/software — phan mem da cai tren may (loc: /software chrome)",
+        "/installed — giong /software",
+        f"/open chrome — mo 1 app da cai{_disabled_suffix(config.ENABLE_OPEN_APPS)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
         f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
         "",
@@ -344,7 +354,11 @@ def telegram_menu_commands() -> list:
         ("ip", "[Trang thai] IP noi bo va cong khai"),
         ("apps", "[Ung dung] Cua so dang mo"),
         ("windows", "[Ung dung] Giong /apps"),
+        ("software", "[Ung dung] Phan mem da cai tren may"),
+        ("installed", "[Ung dung] Giong /software"),
     ]
+    if config.ENABLE_OPEN_APPS:
+        items.append(("open", "[Ung dung] Mo app, vi du /open chrome"))
     if config.ENABLE_SCREENSHOT:
         items.append(("screenshot", "[Chup] Chup man hinh"))
     if config.ENABLE_LOCK:
@@ -426,6 +440,69 @@ def _cmd_apps(chat_id: str, args: str) -> None:
         telegram_api.send_message(chat_id, system_info.get_running_apps_text())
     except Exception as e:
         telegram_api.reply(chat_id, f"Loi /apps: {e}", parse_mode="")
+
+
+def _cmd_software(chat_id: str, args: str) -> None:
+    telegram_api.send_chat_action(chat_id)
+    try:
+        pages = system_info.get_installed_software_chunks(args)
+    except Exception as e:
+        telegram_api.reply(chat_id, f"Loi /software: {e}", parse_mode="")
+        return
+    max_pages = 4
+    for page in pages[:max_pages]:
+        telegram_api.send_message(chat_id, page)
+    extra = len(pages) - max_pages
+    if extra > 0:
+        telegram_api.reply(
+            chat_id,
+            f"Con {extra} trang. Loc cho ngan hon, vi du /software chrome",
+            parse_mode="",
+        )
+    if config.ENABLE_OPEN_APPS and args.strip():
+        launchable = system_info.get_launchable_apps(args)
+        keyboard = system_info.open_app_keyboard(launchable)
+        if keyboard:
+            telegram_api.reply(
+                chat_id,
+                "Bam nut de mo app:",
+                parse_mode="",
+                reply_markup=keyboard,
+            )
+
+
+def _cmd_open(chat_id: str, args: str) -> None:
+    if not config.ENABLE_OPEN_APPS:
+        telegram_api.send_message(chat_id, "Tinh nang mo app dang bi tat (ENABLE_OPEN_APPS=false trong .env).")
+        return
+    query = args.strip()
+    if not query:
+        telegram_api.reply(
+            chat_id,
+            "Gui /open tenapp. Vi du /open chrome\nHoac /software chrome roi bam Mo.",
+            parse_mode="",
+        )
+        return
+    status, item, hits = system_info.match_launchable(query)
+    if status == "none":
+        telegram_api.reply(
+            chat_id,
+            f"Khong khop app nao voi '{query}'. Thu /software {query} hoac /open chrome",
+            parse_mode="",
+        )
+        return
+    if status == "many":
+        keyboard = system_info.open_app_keyboard(hits)
+        names = ", ".join(x["name"] for x in hits[:8])
+        telegram_api.reply(
+            chat_id,
+            f"Nhieu app khop: {names}\nBam nut hoac ghi ro hon.",
+            parse_mode="",
+            reply_markup=keyboard,
+        )
+        return
+    ok, msg = system_info.launch_app(item or {})
+    telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
 
 
 def _cmd_ip(chat_id: str, args: str) -> None:
@@ -888,6 +965,9 @@ def handle_callback(chat_id: str, data: str) -> bool:
         if data.startswith("vpn_off:"):
             _cmd_vpn_off(chat_id, data.split(":", 1)[1])
             return True
+        if data.startswith("o:"):
+            _cmd_open(chat_id, data.split(":", 1)[1])
+            return True
         telegram_api.reply(chat_id, f"Khong hieu nut bam: {data}", parse_mode="")
         return True
     except Exception as e:
@@ -909,6 +989,11 @@ COMMAND_TABLE = {
     "/procs": _cmd_procs,
     "/apps": _cmd_apps,
     "/windows": _cmd_apps,
+    "/software": _cmd_software,
+    "/installed": _cmd_software,
+    "/programs": _cmd_software,
+    "/open": _cmd_open,
+    "/run": _cmd_open,
     "/ip": _cmd_ip,
     "/screenshot": _cmd_screenshot,
     "/lock": _cmd_lock,

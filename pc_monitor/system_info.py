@@ -9,9 +9,11 @@ import os
 import re
 import socket
 import time
+import hashlib
 import platform
 import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import psutil
 import requests
@@ -701,3 +703,361 @@ def get_cpu_ram_percent() -> tuple:
 
 def get_hostname() -> str:
     return platform.node()
+
+
+def _skip_installed_name(name: str) -> bool:
+    low = name.lower()
+    if not name.strip():
+        return True
+    if low.startswith(("update for", "security update", "hotfix", "kb")):
+        return True
+    if "update for microsoft" in low or "hotfix for" in low:
+        return True
+    return False
+
+
+def _installed_windows() -> list[dict]:
+    import winreg
+
+    hives = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+    seen: dict[str, dict] = {}
+    for hive, path in hives:
+        try:
+            root = winreg.OpenKey(hive, path)
+        except OSError:
+            continue
+        i = 0
+        while True:
+            try:
+                sub = winreg.EnumKey(root, i)
+            except OSError:
+                break
+            i += 1
+            try:
+                key = winreg.OpenKey(root, sub)
+            except OSError:
+                continue
+            try:
+                name, _ = winreg.QueryValueEx(key, "DisplayName")
+            except OSError:
+                continue
+            name = str(name).strip()
+            if _skip_installed_name(name):
+                continue
+            try:
+                ver, _ = winreg.QueryValueEx(key, "DisplayVersion")
+            except OSError:
+                ver = ""
+            key_name = name.lower()
+            if key_name in seen:
+                continue
+            seen[key_name] = {"name": name, "version": str(ver or "").strip()}
+    return sorted(seen.values(), key=lambda x: x["name"].lower())
+
+
+def _installed_macos() -> list[dict]:
+    seen: dict[str, dict] = {}
+    roots = [Path("/Applications"), Path.home() / "Applications"]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for item in entries:
+            if item.suffix != ".app":
+                continue
+            name = item.stem
+            if _skip_installed_name(name):
+                continue
+            seen[name.lower()] = {"name": name, "version": ""}
+    return sorted(seen.values(), key=lambda x: x["name"].lower())
+
+
+def _installed_linux() -> list[dict]:
+    seen: dict[str, dict] = {}
+    desktop_dirs = [
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path.home() / ".local/share/applications",
+    ]
+    for folder in desktop_dirs:
+        if not folder.is_dir():
+            continue
+        try:
+            files = list(folder.glob("*.desktop"))
+        except OSError:
+            continue
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "NoDisplay=true" in text:
+                continue
+            name = ""
+            for line in text.splitlines():
+                if line.startswith("Name=") and not line.startswith("Name["):
+                    name = line.split("=", 1)[1].strip()
+                    break
+            if name and not _skip_installed_name(name):
+                seen[name.lower()] = {"name": name, "version": ""}
+    if seen:
+        return sorted(seen.values(), key=lambda x: x["name"].lower())
+    try:
+        out = subprocess.check_output(
+            ["dpkg-query", "-W", "-f=${Package}\n"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        for pkg in out.splitlines():
+            pkg = pkg.strip()
+            if pkg:
+                seen[pkg.lower()] = {"name": pkg, "version": ""}
+    except Exception:
+        pass
+    return sorted(seen.values(), key=lambda x: x["name"].lower())
+
+
+def get_installed_software(query: str = "") -> list[dict]:
+    system = _os_name()
+    if system == "Windows":
+        items = _installed_windows()
+    elif system == "Darwin":
+        items = _installed_macos()
+    else:
+        items = _installed_linux()
+    q = (query or "").strip().lower()
+    if q:
+        items = [
+            x for x in items
+            if q in x["name"].lower() or q in (x.get("version") or "").lower()
+        ]
+    return items
+
+
+def get_installed_software_chunks(query: str = "", per_page: int = 45) -> list[str]:
+    """Danh sach phan mem da cai. Cat thanh nhieu tin Telegram."""
+    items = get_installed_software(query)
+    q = (query or "").strip()
+    title = "PHAN MEM DA CAI"
+    if q:
+        title += f" (loc: {_html_escape(q)})"
+    if not items:
+        hint = "Thu /software ten  (vi du /software chrome)" if q else "Khong doc duoc danh sach cai dat."
+        return [f"📦 <b>{title}</b>\nKhong tim thay.\n{hint}"]
+
+    pages = []
+    for start in range(0, len(items), per_page):
+        chunk = items[start:start + per_page]
+        lines = [f"📦 <b>{title}</b> ({len(items)})  {start + 1}-{start + len(chunk)}"]
+        for item in chunk:
+            ver = f"  <code>{_html_escape(item['version'])}</code>" if item.get("version") else ""
+            lines.append(f"- {_html_escape(item['name'])}{ver}")
+        if start + per_page < len(items):
+            lines.append("...")
+        if start == 0:
+            lines.append("Mo app: /open chrome   |   Loc: /software chrome   |   Dang mo: /apps")
+        pages.append("\n".join(lines))
+    return pages
+
+
+def _app_id(name: str) -> str:
+    return hashlib.md5((name or "").strip().lower().encode("utf-8")).hexdigest()[:16]
+
+
+def _skip_launch_name(name: str) -> bool:
+    low = name.lower()
+    if _skip_installed_name(name):
+        return True
+    return any(x in low for x in ("uninstall", "help", "readme", "documentation", "release notes"))
+
+
+def _launchable_windows() -> list[dict]:
+    items: dict[str, dict] = {}
+    bases = [
+        Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+        Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+    ]
+    for base in bases:
+        if not base.is_dir():
+            continue
+        try:
+            paths = base.rglob("*.lnk")
+        except OSError:
+            continue
+        for lnk in paths:
+            try:
+                name = lnk.stem
+                if _skip_launch_name(name):
+                    continue
+                key = name.lower()
+                if key in items:
+                    continue
+                items[key] = {
+                    "id": _app_id(name),
+                    "name": name,
+                    "launch": str(lnk),
+                    "kind": "lnk",
+                }
+            except OSError:
+                continue
+    return sorted(items.values(), key=lambda x: x["name"].lower())
+
+
+def _launchable_macos() -> list[dict]:
+    items = []
+    for app in _installed_macos():
+        name = app["name"]
+        path = None
+        for root in (Path("/Applications"), Path.home() / "Applications"):
+            candidate = root / f"{name}.app"
+            if candidate.is_dir():
+                path = str(candidate)
+                break
+        if not path:
+            continue
+        items.append({"id": _app_id(name), "name": name, "launch": path, "kind": "app"})
+    return items
+
+
+def _launchable_linux() -> list[dict]:
+    items: dict[str, dict] = {}
+    desktop_dirs = [
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path.home() / ".local/share/applications",
+    ]
+    for folder in desktop_dirs:
+        if not folder.is_dir():
+            continue
+        try:
+            files = list(folder.glob("*.desktop"))
+        except OSError:
+            continue
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "NoDisplay=true" in text or "Hidden=true" in text:
+                continue
+            name = ""
+            for line in text.splitlines():
+                if line.startswith("Name=") and not line.startswith("Name["):
+                    name = line.split("=", 1)[1].strip()
+                    break
+            if not name or _skip_launch_name(name):
+                continue
+            key = name.lower()
+            if key in items:
+                continue
+            items[key] = {
+                "id": _app_id(name),
+                "name": name,
+                "launch": str(path),
+                "kind": "desktop",
+            }
+    return sorted(items.values(), key=lambda x: x["name"].lower())
+
+
+_LAUNCH_CACHE: dict = {"ts": 0.0, "items": []}
+
+
+def get_launchable_apps(query: str = "") -> list[dict]:
+    now = time.time()
+    if now - float(_LAUNCH_CACHE["ts"]) > 60 or not _LAUNCH_CACHE["items"]:
+        system = _os_name()
+        if system == "Windows":
+            items = _launchable_windows()
+        elif system == "Darwin":
+            items = _launchable_macos()
+        else:
+            items = _launchable_linux()
+        _LAUNCH_CACHE["ts"] = now
+        _LAUNCH_CACHE["items"] = items
+    items = list(_LAUNCH_CACHE["items"])
+    q = (query or "").strip().lower()
+    if q:
+        items = [x for x in items if q in x["name"].lower() or q == x.get("id")]
+    return items
+
+
+def match_launchable(query: str) -> tuple[str, dict | None, list[dict]]:
+    """Tra ve ('ok', item, []), ('many', None, hits) hoac ('none', None, [])."""
+    q = (query or "").strip()
+    if not q:
+        return "none", None, []
+    items = get_launchable_apps()
+    ql = q.lower()
+    for item in items:
+        if item["id"] == ql or item["name"].lower() == ql:
+            return "ok", item, []
+    hits = [x for x in items if ql in x["name"].lower() or x["name"].lower().startswith(ql)]
+    if len(hits) == 1:
+        return "ok", hits[0], []
+    if len(hits) > 1:
+        exact = [x for x in hits if x["name"].lower() == ql]
+        if len(exact) == 1:
+            return "ok", exact[0], []
+        return "many", None, hits[:12]
+    return "none", None, []
+
+
+def launch_app(item: dict) -> tuple[bool, str]:
+    name = str(item.get("name") or "app")
+    path = str(item.get("launch") or "")
+    if not path:
+        return False, f"Khong co duong dan de mo {name}."
+    target = Path(path)
+    if not target.exists():
+        return False, f"Khong thay file mo {name}."
+    system = _os_name()
+    try:
+        if system == "Windows":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif system == "Darwin":
+            subprocess.Popen(
+                ["open", path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            cmd = ["xdg-open", path]
+            if path.endswith(".desktop"):
+                cmd = ["gtk-launch", target.stem]
+            try:
+                subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                subprocess.Popen(
+                    ["xdg-open", path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+        return True, f"Da mo {name}."
+    except Exception as e:
+        return False, f"Khong mo duoc {name}: {e}"
+
+
+def open_app_keyboard(items: list[dict]) -> dict | None:
+    if not items:
+        return None
+    rows = []
+    for item in items[:8]:
+        label = (item.get("name") or "app")[:28]
+        rows.append([{"text": f"Mo {label}", "callback_data": f"o:{item['id']}"}])
+    return {"inline_keyboard": rows}
