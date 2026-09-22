@@ -27,7 +27,9 @@ qua file `.env` de dung cho **nhieu may tinh va nhieu bot Telegram khac nhau**.
 
 ```
 pc-monitor-pro/
-├── main.py                    # startup/shutdown/heartbeat/test/listen/install
+├── start-project.py           # clone xong chay 1 lan (moi OS)
+├── start-project.sh / .bat
+├── main.py                    # startup/shutdown/heartbeat/test/listen/hide/install
 ├── requirements.txt           # danh sach thu vien python can cai
 ├── .env.example                # file cau hinh mau (copy thanh .env)
 ├── pc_monitor/                 # ma nguon chinh
@@ -73,8 +75,27 @@ pc-monitor-pro/
 
 ## Cai dat chung (moi OS)
 
-Cac buoc nay giong nhau tren ca 3 he dieu hanh, lam truoc khi chay script
-rieng cua tung OS ben duoi.
+May moi, **1 lenh** sau `git clone` (can Python 3.10+):
+
+```bash
+# macOS / Linux / Git Bash
+chmod +x start-project.sh
+./start-project.sh
+
+# Windows CMD
+start-project.bat
+
+# Moi OS
+python3 start-project.py
+py start-project.py
+```
+
+Script tao `.venv`, `pip install`, copy `.env` neu chua co, dang ky autostart,
+bat listen an. Neu `.env` chua dien token: mo file, dien `BOT_TOKEN` +
+`ALLOWED_CHAT_IDS`, chay **lai** `start-project`. Lan sau chi `git pull`
+hoac `/update`.
+
+Cac buoc thu cong (neu khong dung start-project) giong nhau tren 3 OS:
 
 ### Buoc 1: Cai Python 3
 

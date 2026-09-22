@@ -308,24 +308,25 @@ def _cmd_autostart_off(chat_id: str, args: str) -> None:
 
 
 def _cmd_service(chat_id: str, args: str) -> None:
-    telegram_api.send_message(chat_id, "Dang doc /service...")
-
-    def _run() -> None:
-        try:
-            text = autostart.status_text(fast=True)
-        except Exception as e:
-            safe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            telegram_api.send_message(chat_id, f"❌ Khong doc duoc trang thai service.\n{safe}")
-            return
-        sent = telegram_api.send_message(chat_id, text)
+    telegram_api.log(f"Nhan /service tu {chat_id}")
+    try:
+        text = autostart.status_text(fast=True)
+        plain = (
+            text.replace("<b>", "")
+            .replace("</b>", "")
+            .replace("<code>", "")
+            .replace("</code>", "")
+        )
+        sent = telegram_api.send_message(chat_id, plain, parse_mode="")
         if not sent:
             telegram_api.send_message(
                 chat_id,
-                "Khong gui duoc chi tiet /service. Tren may: python main.py service",
+                "SERVICE: listen dang tra loi. Autostart: xem file Startup "
+                "(PCMonitorPro_Listener.vbs). Chi tiet: python main.py service",
                 parse_mode="",
             )
-
-    threading.Thread(target=_run, daemon=True).start()
+    except Exception as e:
+        telegram_api.send_message(chat_id, f"Loi /service: {e}", parse_mode="")
 
 
 def _cmd_update(chat_id: str, args: str) -> None:
@@ -472,16 +473,22 @@ def _cmd_vpn(chat_id: str, args: str) -> None:
     if arg in ("off", "stop", "down"):
         _cmd_vpn_off(chat_id, "")
         return
-    telegram_api.send_chat_action(chat_id)
-    ok, err, profiles = vpn.list_profiles()
-    if not ok:
-        telegram_api.send_message(chat_id, "❌ " + err.replace("&", "&amp;").replace("<", "&lt;"))
-        return
-    telegram_api.send_message(
-        chat_id,
-        vpn.format_list_text(profiles),
-        reply_markup=vpn.list_keyboard(profiles),
-    )
+    telegram_api.send_message(chat_id, "Dang doc profile Pritunl...", parse_mode="")
+
+    def _run() -> None:
+        ok, err, profiles = vpn.list_profiles()
+        if not ok:
+            telegram_api.send_message(chat_id, "VPN: " + err, parse_mode="")
+            return
+        sent = telegram_api.send_message(
+            chat_id,
+            vpn.format_list_text(profiles),
+            reply_markup=vpn.list_keyboard(profiles),
+        )
+        if not sent:
+            telegram_api.send_message(chat_id, vpn.format_list_text(profiles), parse_mode="")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _cmd_vpn_on(chat_id: str, args: str) -> None:
@@ -586,6 +593,7 @@ COMMAND_TABLE = {
     "/autostart": _cmd_autostart,
     "/autostart_off": _cmd_autostart_off,
     "/service": _cmd_service,
+    "/svc": _cmd_service,
     "/update": _cmd_update,
     "/shutdown_now": _cmd_shutdown_now,
     "/restart_now": _cmd_restart_now,

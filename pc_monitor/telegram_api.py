@@ -43,6 +43,9 @@ def send_chat_action(chat_id: str, action: str = "typing") -> None:
 
 
 def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
+    if not text:
+        text = "(trong)"
+    text = str(text)[:4000]
     try:
         data = {"chat_id": chat_id, "text": text}
         if parse_mode:
@@ -53,18 +56,16 @@ def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup
         result = resp.json()
         if result.get("ok"):
             return True
-        desc = str(result.get("description", "")).lower()
-        if parse_mode and "parse" in desc:
-            log(f"Tin nhan HTML bi loi, gui lai dang thuong: {result}")
-            resp = requests.post(
-                _url("sendMessage"),
-                data={"chat_id": chat_id, "text": text},
-                timeout=15,
-            )
-            result = resp.json()
-            if result.get("ok"):
-                return True
-        log(f"Telegram tra ve loi khi gui tin nhan: {result}")
+        log(f"Telegram loi sendMessage, thu gui text thuong: {result}")
+        resp = requests.post(
+            _url("sendMessage"),
+            data={"chat_id": chat_id, "text": text},
+            timeout=15,
+        )
+        result = resp.json()
+        if result.get("ok"):
+            return True
+        log(f"Telegram van loi khi gui tin nhan: {result}")
         return False
     except requests.RequestException as e:
         log(f"Loi mang khi gui tin nhan: {e}")

@@ -984,13 +984,13 @@ def status_text(*, fast: bool = True) -> str:
             "Dang nhap lai may, hoac chay <code>python main.py listen</code>.\n"
         )
     header = (
-        f"⚙️ <b>SERVICE KHOI DONG</b>\n"
+        f"SERVICE KHOI DONG\n"
         f"{verdict}\n"
         f"{listen_line}\n"
         f"{hint}"
         f"May: {_html(config.COMPUTER_NAME)}\n"
         f"He dieu hanh: {_html(system)}\n"
-        f"Python: <code>{_html(_python_bin())}</code>\n"
+        f"Python: {_html(_python_bin())}\n"
     )
     try:
         if fast and system == "Windows":
