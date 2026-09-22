@@ -354,13 +354,29 @@ def _cmd_service(chat_id: str, args: str) -> None:
 
 
 def _cmd_update(chat_id: str, args: str) -> None:
-    telegram_api.send_message(chat_id, "Dang git pull --ff-only...")
+    telegram_api.log(f"Nhan /update tu {chat_id}")
+    telegram_api.send_chat_action(chat_id)
+    sent = telegram_api.send_message(
+        chat_id,
+        "Dang git pull --ff-only...\nThuong tra loi trong 10-30 giay.",
+        parse_mode="",
+    )
+    if not sent:
+        telegram_api.log("Khong gui duoc tin ACK /update")
 
     def _run() -> None:
-        ok, msg, will_restart = updater.apply_and_restart()
-        safe = msg.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        telegram_api.send_message(chat_id, ("✅ " if ok else "❌ ") + safe)
+        try:
+            ok, msg, will_restart = updater.apply_and_restart()
+        except Exception as e:
+            telegram_api.log(f"/update loi: {e}")
+            ok, msg, will_restart = False, f"Loi /update: {e}", False
+        telegram_api.send_message(
+            chat_id,
+            ("OK. " if ok else "Loi. ") + str(msg)[:3500],
+            parse_mode="",
+        )
         if ok and will_restart:
+            time.sleep(0.5)
             updater.spawn_new_listener()
 
     threading.Thread(target=_run, daemon=True).start()

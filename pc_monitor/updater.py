@@ -1,5 +1,5 @@
 """
-updater.py - git pull --ff-only roi khoi dong lai listen (khong can gõ tay).
+updater.py - git pull --ff-only roi khoi dong lai listen (khong can go tay).
 """
 
 from __future__ import annotations
@@ -7,20 +7,60 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 from . import config
 from . import telegram_api
 
+_git_lock = threading.Lock()
 
-def _git(*args: str, timeout: int = 90) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(config.PROJECT_ROOT), *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+
+def _git_bin() -> str:
+    env = os.getenv("GIT_EXECUTABLE", "").strip()
+    if env and Path(env).exists():
+        return env
+    if os.name == "nt":
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        for candidate in (
+            Path(pf) / "Git" / "cmd" / "git.exe",
+            Path(pf86) / "Git" / "cmd" / "git.exe",
+            Path(local) / "Programs" / "Git" / "cmd" / "git.exe",
+        ):
+            if candidate.exists():
+                return str(candidate)
+    return "git"
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env["GIT_ASKPASS"] = "echo"
+    env["SSH_ASKPASS"] = "echo"
+    env["GC_CONNECT_TIMEOUT"] = "15"
+    env["GIT_HTTP_LOW_SPEED_LIMIT"] = "1000"
+    env["GIT_HTTP_LOW_SPEED_TIME"] = "20"
+    return env
+
+
+def _git(*args: str, timeout: int = 25) -> subprocess.CompletedProcess:
+    kwargs: dict = {
+        "args": [_git_bin(), "-C", str(config.PROJECT_ROOT), *args],
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+        "env": _git_env(),
+        "stdin": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return subprocess.run(**kwargs)
 
 
 def _out(result: subprocess.CompletedProcess) -> str:
@@ -28,7 +68,7 @@ def _out(result: subprocess.CompletedProcess) -> str:
 
 
 def current_revision() -> str:
-    result = _git("rev-parse", "--short", "HEAD")
+    result = _git("rev-parse", "--short", "HEAD", timeout=10)
     return (result.stdout or "").strip() or "?"
 
 
@@ -47,12 +87,29 @@ def _is_skip_dirty(path: str) -> bool:
     return any(p.startswith(pref) or f"/{pref}" in f"/{p}" for pref in _SKIP_DIRTY_PREFIXES)
 
 
+def _clear_stale_lock() -> None:
+    lock = config.PROJECT_ROOT / ".git" / "index.lock"
+    try:
+        if not lock.exists():
+            return
+        age = time.time() - lock.stat().st_mtime
+        if age > 90:
+            lock.unlink()
+            telegram_api.log("Da xoa .git/index.lock cu.")
+    except OSError:
+        pass
+
+
 def pull_ff_only() -> tuple[bool, str, bool]:
     """Tra ve (ok, thong_bao, co_code_moi). Khong merge neu local sua file."""
+    if not _git_lock.acquire(timeout=3):
+        return False, "Dang co git khac chay. Gui lai /update sau 20 giay.", False
     try:
-        dirty = _git("status", "--porcelain")
+        _clear_stale_lock()
+        dirty = _git("status", "--porcelain", timeout=15)
         if dirty.returncode != 0:
-            return False, "Thu muc khong phai git repo (hoac thieu git).", False
+            err = _out(dirty)[:300]
+            return False, err or "Thu muc khong phai git repo (hoac thieu git).", False
         tracked_dirty = []
         for line in (dirty.stdout or "").splitlines():
             if not line.strip():
@@ -68,12 +125,16 @@ def pull_ff_only() -> tuple[bool, str, bool]:
             preview = ", ".join(ln[3:].strip() for ln in tracked_dirty[:6])
             return False, f"Co thay doi local, khong tu pull: {preview}", False
 
-        fetched = _git("fetch", "origin")
+        fetched = _git("fetch", "--prune", "origin", timeout=25)
         if fetched.returncode != 0:
             return False, f"git fetch that bai: {_out(fetched)[:400]}", False
 
         before = current_revision()
-        pulled = _git("pull", "--ff-only", "origin")
+        branch = (_git("rev-parse", "--abbrev-ref", "HEAD", timeout=10).stdout or "").strip()
+        pull_args = ["pull", "--ff-only", "origin"]
+        if branch and branch != "HEAD":
+            pull_args.append(branch)
+        pulled = _git(*pull_args, timeout=40)
         if pulled.returncode != 0:
             return False, f"git pull --ff-only that bai: {_out(pulled)[:400]}", False
         after = current_revision()
@@ -82,11 +143,16 @@ def pull_ff_only() -> tuple[bool, str, bool]:
             return True, f"Dang la ban moi nhat ({after}).", False
         return True, f"Da cap nhat {before} -> {after}.\n{_out(pulled)[:500]}", True
     except FileNotFoundError:
-        return False, "May chua cai git.", False
+        return False, (
+            "Khong tim thay git.exe (listen an thuong thieu PATH).\n"
+            "Cai Git for Windows, hoac tren may chay: git pull roi python main.py listen."
+        ), False
     except subprocess.TimeoutExpired:
-        return False, "git het thoi gian (mang/VPN?).", False
+        return False, "git het thoi gian (mang/VPN/GitHub?). Thu lai khi da co mang.", False
     except Exception as e:
         return False, str(e), False
+    finally:
+        _git_lock.release()
 
 
 def spawn_new_listener(*, notify_update: bool = True, kind: str | None = None) -> None:
