@@ -21,6 +21,7 @@ from . import updater
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
 CONFIRM_TIMEOUT_SECONDS = 30
+_BG_SLOTS = threading.Semaphore(2)
 
 
 def _reply(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
@@ -28,9 +29,17 @@ def _reply(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: dict
 
 
 def _bg(chat_id: str, label: str, fn) -> None:
-    """Chay lenh lau trong thread; loi van gui Telegram, khong crash listen."""
+    """Chay lenh lau trong thread; toi da 2 lenh nen cung luc, loi van gui Telegram."""
 
     def _run() -> None:
+        got = _BG_SLOTS.acquire(timeout=45)
+        if not got:
+            telegram_api.reply(
+                chat_id,
+                f"{label} cho qua lau (dang co lenh nen khac). Gui lai sau.",
+                parse_mode="",
+            )
+            return
         try:
             fn()
         except Exception as e:
@@ -40,6 +49,8 @@ def _bg(chat_id: str, label: str, fn) -> None:
                 f"Loi {label}: {e}\nListen van dang chay.",
                 parse_mode="",
             )
+        finally:
+            _BG_SLOTS.release()
 
     threading.Thread(target=_run, daemon=True).start()
 

@@ -7,6 +7,8 @@ import sys
 import time
 import signal
 import threading
+from queue import Full, Queue
+
 import requests
 
 from . import config
@@ -18,7 +20,7 @@ from . import updater
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
-
+_JOB_QUEUE: Queue = Queue(maxsize=12)
 _shutting_down = False
 
 
@@ -51,6 +53,43 @@ def _save_offset(offset: int) -> None:
         config.OFFSET_FILE.write_text(str(offset))
     except OSError:
         pass
+
+
+def _enqueue(kind: str, chat_id: str, fn) -> None:
+    """Nhan lenh xong tra poll ngay. Xu ly tuan tu trong worker, tranh treo hang loat."""
+    waiting = _JOB_QUEUE.qsize()
+    try:
+        _JOB_QUEUE.put_nowait((kind, chat_id, fn))
+    except Full:
+        telegram_api.reply(
+            chat_id,
+            "Hang doi day (qua nhieu lenh cung luc). Doi tin ket qua roi gui lai.",
+            parse_mode="",
+        )
+        return
+    if waiting >= 1:
+        telegram_api.reply(
+            chat_id,
+            f"Da nhan {kind}. Dang xu ly, con {waiting} lenh truoc do.",
+            parse_mode="",
+        )
+
+
+def _command_worker() -> None:
+    while True:
+        kind, chat_id, fn = _JOB_QUEUE.get()
+        try:
+            fn()
+        except Exception as e:
+            telegram_api.log(f"Worker {kind}: {e}")
+            if chat_id:
+                telegram_api.reply(
+                    chat_id,
+                    f"Loi {kind}: {e}\nListen van dang chay.",
+                    parse_mode="",
+                )
+        finally:
+            _JOB_QUEUE.task_done()
 
 
 def _alert_watcher_loop() -> None:
@@ -213,6 +252,7 @@ def run() -> None:
         )
 
     threading.Thread(target=_auto_update_loop, daemon=True).start()
+    threading.Thread(target=_command_worker, name="cmd-worker", daemon=True).start()
 
     offset = _load_offset()
 
@@ -257,7 +297,11 @@ def run() -> None:
                     if chat_id not in config.ALLOWED_CHAT_IDS:
                         telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
                         continue
-                    commands.handle_callback(chat_id, data)
+                    _enqueue(
+                        f"nut:{data[:24]}",
+                        chat_id,
+                        lambda cid=chat_id, payload=data: commands.handle_callback(cid, payload),
+                    )
                     continue
 
                 message = update.get("message") or {}
@@ -272,15 +316,18 @@ def run() -> None:
                 if not text:
                     continue
 
-                handled = commands.dispatch(chat_id, text)
-                if not handled:
-                    telegram_api.log(f"Lenh khong xac dinh tu {chat_id}: {text}")
-                    if text.startswith("/"):
-                        telegram_api.reply(
-                            chat_id,
-                            "Khong hieu lenh nay.\n\n" + commands.build_help_text(),
-                            parse_mode="HTML",
-                        )
+                def _job(cid=chat_id, body=text):
+                    handled = commands.dispatch(cid, body)
+                    if not handled:
+                        telegram_api.log(f"Lenh khong xac dinh tu {cid}: {body}")
+                        if body.startswith("/"):
+                            telegram_api.reply(
+                                cid,
+                                "Khong hieu lenh nay.\n\n" + commands.build_help_text(),
+                                parse_mode="HTML",
+                            )
+
+                _enqueue(text.split()[0][:24], chat_id, _job)
             except Exception as e:
                 telegram_api.log(f"Loi khi xu ly update: {e}")
                 chat_id = ""
