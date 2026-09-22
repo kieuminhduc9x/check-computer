@@ -20,8 +20,7 @@ from . import updater
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
-JOB_TIMEOUT_SEC = 60
-_JOB_QUEUE: Queue = Queue(maxsize=20)
+_GROUP_QUEUES: dict[str, Queue] = {}
 _shutting_down = False
 
 
@@ -57,8 +56,10 @@ def _save_offset(offset: int) -> None:
 
 
 def _enqueue(kind: str, chat_id: str, fn) -> None:
-    """Nhan lenh xong tra poll ngay. Loading gui o thread khac de khong treo getUpdates."""
-    waiting = _JOB_QUEUE.qsize()
+    """Nhan lenh xong tra poll ngay. Moi group lenh 1 hang doi rieng."""
+    group = commands.command_group(kind)
+    queue = _GROUP_QUEUES[group]
+    waiting = queue.qsize()
     threading.Thread(
         target=commands.send_loading,
         args=(chat_id, kind, waiting),
@@ -66,19 +67,21 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
         name="loading",
     ).start()
     try:
-        _JOB_QUEUE.put_nowait((kind, chat_id, fn))
+        queue.put_nowait((kind, chat_id, fn))
     except Full:
+        label = commands.GROUP_META[group]["label"]
         threading.Thread(
             target=telegram_api.reply,
-            args=(chat_id, "Hang doi day (qua nhieu lenh). Doi tin ket qua roi gui lai."),
+            args=(chat_id, f"Hang doi [{label}] day. Doi tin ket qua group nay roi gui lai. Group khac van nhan lenh."),
             kwargs={"parse_mode": "", "timeout": 3},
             daemon=True,
         ).start()
 
 
-def _command_worker() -> None:
+def _command_worker(queue: Queue, timeout_sec: int, group: str) -> None:
+    label = commands.GROUP_META[group]["label"]
     while True:
-        kind, chat_id, fn = _JOB_QUEUE.get()
+        kind, chat_id, fn = queue.get()
         done = threading.Event()
         box: dict = {"err": None}
 
@@ -90,25 +93,38 @@ def _command_worker() -> None:
             finally:
                 done.set()
 
-        threading.Thread(target=_run, daemon=True, name=f"job-{kind[:12]}").start()
-        finished = done.wait(JOB_TIMEOUT_SEC)
+        threading.Thread(target=_run, daemon=True, name=f"{group}-{kind[:12]}").start()
+        finished = done.wait(timeout_sec)
         if not finished:
-            telegram_api.log(f"Job {kind} qua {JOB_TIMEOUT_SEC}s")
+            telegram_api.log(f"Job [{label}] {kind} qua {timeout_sec}s")
             if chat_id:
                 telegram_api.reply(
                     chat_id,
-                    f"{kind} chua xong sau {JOB_TIMEOUT_SEC}s. Listen van nhan lenh moi. Gui lai neu can.",
+                    f"[{label}] {kind} chua xong sau {timeout_sec}s. Group khac van nhan lenh. Gui lai neu can.",
                     parse_mode="",
                     timeout=5,
                 )
         elif box["err"] and chat_id:
-            telegram_api.log(f"Worker {kind}: {box['err']}")
+            telegram_api.log(f"Worker [{label}] {kind}: {box['err']}")
             telegram_api.reply(
                 chat_id,
-                f"Loi {kind}: {box['err']}\nListen van dang chay.",
+                f"Loi [{label}] {kind}: {box['err']}\nListen van dang chay.",
                 parse_mode="",
             )
-        _JOB_QUEUE.task_done()
+        queue.task_done()
+
+
+def _start_group_workers() -> None:
+    for name, meta in commands.GROUP_META.items():
+        queue: Queue = Queue(maxsize=int(meta["maxsize"]))
+        _GROUP_QUEUES[name] = queue
+        threading.Thread(
+            target=_command_worker,
+            args=(queue, int(meta["timeout"]), name),
+            name=f"cmd-{name}",
+            daemon=True,
+        ).start()
+        telegram_api.log(f"Group [{meta['label']}] san sang (timeout {meta['timeout']}s)")
 
 
 def _alert_watcher_loop() -> None:
@@ -271,7 +287,7 @@ def run() -> None:
         )
 
     threading.Thread(target=_auto_update_loop, daemon=True).start()
-    threading.Thread(target=_command_worker, name="cmd-worker", daemon=True).start()
+    _start_group_workers()
 
     offset = _load_offset()
 

@@ -9,10 +9,13 @@ import os
 import platform
 import socket
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from http.client import HTTPConnection
 from pathlib import Path
+
+from . import telegram_api
 
 
 def _os() -> str:
@@ -462,6 +465,36 @@ def _password() -> str:
     return (os.getenv("PRITUNL_PASSWORD") or "").strip()
 
 
+def _disable_gateway() -> bool:
+    """Mac dinh bat: giu internet thuong (Telegram) khi VPN len.
+    Dat PRITUNL_DISABLE_GATEWAY=0 neu can full tunnel."""
+    val = (os.getenv("PRITUNL_DISABLE_GATEWAY") or "1").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def _telegram_lost_after_vpn(profile_id: str, name: str) -> str:
+    """Neu VPN nuot default route, bot mat Telegram — tu tat profile vua bat."""
+    time.sleep(2)
+    if telegram_api.api_reachable(timeout=6):
+        return ""
+    time.sleep(2)
+    if telegram_api.api_reachable(timeout=6):
+        return ""
+    telegram_api.log(f"Telegram mat sau khi bat VPN {name}; tu tat lai")
+    try:
+        stop_profile(profile_id)
+    except Exception as e:
+        telegram_api.log(f"Khong tat duoc {name} sau khi mat Telegram: {e}")
+    time.sleep(2)
+    recovered = telegram_api.api_reachable(timeout=6)
+    extra = " Telegram da ve." if recovered else " Neu Telegram van chet, tat VPN trong app Pritunl tren PC."
+    return (
+        f"Da bat {name} nhung VPN keo het mang qua tunnel, Telegram mat ket noi. "
+        f"Da tu tat lai de /screenshot con dung duoc.{extra} "
+        "Giu PRITUNL_DISABLE_GATEWAY=1 (mac dinh) hoac bat Disable Gateway / split tunnel trong Pritunl."
+    )
+
+
 def _short_err(text: str) -> str:
     blob = (text or "").strip()
     if _cli_list_broken(blob):
@@ -486,12 +519,18 @@ def start_profile(profile_id: str) -> tuple[bool, str]:
         "username": username,
         "password": password,
         "data": ovpn,
+        "disable_gateway": _disable_gateway(),
     }
     code, body = _service_call("POST", "/profile", payload, timeout=15)
     if 200 <= code < 300:
+        lost = _telegram_lost_after_vpn(pid, name)
+        if lost:
+            return False, lost
         extra = ""
         if not password:
             extra = " Neu VPN hoi PIN/OTP, dien PRITUNL_PASSWORD trong .env."
+        if _disable_gateway():
+            extra += " Dang bat split tunnel (Disable Gateway) de Telegram khong bi VPN nuot."
         return True, f"Da gui lenh bat {name} ({_mode()}).{extra}"
     if code == 0:
         service_err = f"Khong noi duoc Pritunl service ({body}). Mo app Pritunl Client tren PC."
@@ -506,6 +545,9 @@ def start_profile(profile_id: str) -> tuple[bool, str]:
     try:
         result = _run_client(args, timeout=20)
         if result.returncode == 0:
+            lost = _telegram_lost_after_vpn(pid, name)
+            if lost:
+                return False, lost
             return True, f"Da bat {name} bang CLI ({_mode()})"
         err = _short_err((result.stderr or result.stdout or "") or service_err)
     except FileNotFoundError:
@@ -537,22 +579,34 @@ def stop_profile(profile_id: str) -> tuple[bool, str]:
     return False, err or f"Khong tat duoc {name}"
 
 
+def _named_profiles(profiles: list[dict]) -> list[dict]:
+    named = [p for p in profiles if (p.get("name") or "").lower() != (p.get("id") or "").lower()]
+    return named or profiles
+
+
 def start_all() -> tuple[bool, str]:
     ok, err, profiles = list_profiles()
     if not ok:
         return False, err
     if not profiles:
         return True, "Khong co profile Pritunl nao (hay import trong client truoc)."
+    targets = _named_profiles(profiles)
+    skipped = len(profiles) - len(targets)
     lines = []
+    if skipped:
+        lines.append(f"Bo qua {skipped} profile chi co ma hash (trung). Chi bat profile co ten.")
     any_ok = False
-    for p in profiles:
+    for p in targets:
         if p["connected"]:
             lines.append(f"- {p['name']}: da ket noi, bo qua")
             continue
         started, msg = start_profile(p["id"])
         any_ok = any_ok or started
         lines.append(f"- {p['name']}: {msg}")
-    return any_ok or all(p["connected"] for p in profiles), "\n".join(lines)
+        if not started and "Telegram mat ket noi" in msg:
+            lines.append("Dung bat them profile vi Telegram vua bi VPN chan.")
+            break
+    return any_ok or all(p["connected"] for p in targets), "\n".join(lines)
 
 
 def stop_all() -> tuple[bool, str]:
@@ -592,7 +646,7 @@ def list_keyboard(profiles: list[dict]) -> dict | None:
     if not profiles:
         return None
     rows = []
-    for p in profiles[:8]:
+    for p in _named_profiles(profiles)[:8]:
         short = p["id"][:12]
         label = (p["name"] or short)[:28]
         if p["connected"]:

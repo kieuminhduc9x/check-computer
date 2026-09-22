@@ -200,6 +200,16 @@ def send_photo(chat_id: str, image_path: Path, caption: str = "") -> bool:
         return False
 
 
+def api_reachable(timeout: float = 5) -> bool:
+    """Kiem tra api.telegram.org con ra duoc khong (sau khi bat VPN)."""
+    try:
+        resp = requests.get(_url("getMe"), timeout=timeout)
+        data = resp.json()
+        return bool(data.get("ok"))
+    except Exception:
+        return False
+
+
 def get_updates(offset: int, timeout: int) -> dict:
     try:
         resp = requests.post(

@@ -23,6 +23,18 @@ _pending_confirmations = {}
 CONFIRM_TIMEOUT_SECONDS = 30
 _BG_SLOTS = threading.Semaphore(2)
 
+GROUP_META = {
+    "info": {"label": "Trang thai", "timeout": 45, "maxsize": 12},
+    "screen": {"label": "Chup man hinh", "timeout": 45, "maxsize": 8},
+    "apps": {"label": "Ung dung", "timeout": 45, "maxsize": 8},
+    "vpn": {"label": "VPN", "timeout": 90, "maxsize": 8},
+    "power": {"label": "Tat/khoi dong", "timeout": 30, "maxsize": 4},
+    "service": {"label": "Service", "timeout": 60, "maxsize": 4},
+    "update": {"label": "Cap nhat", "timeout": 90, "maxsize": 2},
+    "note": {"label": "Ghi chu", "timeout": 20, "maxsize": 8},
+    "menu": {"label": "Menu", "timeout": 20, "maxsize": 8},
+}
+
 _LOADING = {
     "status": "dang lay trang thai may",
     "ping": "dang kiem tra may con online",
@@ -82,12 +94,48 @@ def _norm_loading_key(kind: str) -> str:
     return key
 
 
+def command_group(kind: str) -> str:
+    """Gan lenh vao 1 group de chay doc lap, khong chan group khac."""
+    key = _norm_loading_key(kind)
+    if key.startswith("vpn"):
+        return "vpn"
+    if key.startswith("screenshot"):
+        return "screen"
+    if key.startswith(("apps", "windows", "close", "lock", "confirm_close")):
+        return "apps"
+    if key.startswith((
+        "shutdown",
+        "restart",
+        "confirm_shutdown",
+        "confirm_restart",
+        "cancel_power",
+    )):
+        return "power"
+    if key.startswith(("autostart", "service", "svc", "reload")):
+        return "service"
+    if key.startswith("update"):
+        return "update"
+    if key.startswith("note"):
+        return "note"
+    if key.startswith(("help", "start")):
+        return "menu"
+    if key.startswith(("status", "ping", "cpu", "ram", "disk", "procs", "ip")):
+        return "info"
+    return "menu"
+
+
+def group_label(kind: str) -> str:
+    return GROUP_META[command_group(kind)]["label"]
+
+
 def loading_text(kind: str, waiting: int = 0) -> str:
     key = _norm_loading_key(kind)
+    group = command_group(kind)
+    label = GROUP_META[group]["label"]
     action = _LOADING.get(key) or f"dang xu ly {kind or 'lenh'}"
-    line = f"Dang nhan lenh. {action}..."
+    line = f"[{label}] Dang nhan lenh. {action}..."
     if waiting > 0:
-        line += f" Hang doi: {waiting} lenh truoc."
+        line += f" Hang doi {label}: {waiting} lenh truoc (group khac van chay)."
     return line
 
 
@@ -170,43 +218,55 @@ def _disabled_suffix(enabled: bool) -> str:
 
 def build_help_text() -> str:
     lines = [
-        "🤖 <b>Danh sach lenh</b> (ban day du: co /service /autostart)",
+        "🤖 <b>Danh sach lenh</b>",
+        "Moi group chay doc lap: VPN khong chan screenshot, update khong chan status.",
         "",
-        "<b>Trang thai may</b>",
+        "<b>[Trang thai]</b>",
         "/status — may dang bat, CPU/RAM, app dang dung, app dang mo",
         "/ping — giong /status, dung de hoi may con online khong",
-        "",
-        "<b>Ung dung &amp; tai nguyen</b>",
-        "/apps — danh sach ung dung / cua so dang mo",
-        "/windows — giong /apps",
         "/cpu — % CPU",
         "/ram — % RAM",
         "/disk — dung luong o dia",
         "/procs — top 5 tien trinh ngon CPU",
         "/ip — IP noi bo va IP cong khai",
         "",
-        "<b>Dieu khien</b>",
+        "<b>[Chup man hinh]</b>",
         f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
+        "",
+        "<b>[Ung dung]</b>",
+        "/apps — danh sach ung dung / cua so dang mo",
+        "/windows — giong /apps",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
         f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
+        "",
+        "<b>[VPN]</b>",
         f"/vpn — danh sach profile Pritunl, nut bat/tat{_disabled_suffix(config.ENABLE_VPN)}",
         f"/vpn_on — bat tat ca profile chua ket noi{_disabled_suffix(config.ENABLE_VPN)}",
         f"/vpn_off — tat tat ca profile dang ket noi{_disabled_suffix(config.ENABLE_VPN)}",
+        "",
+        "<b>[Tat/khoi dong]</b>",
         f"/shutdown_now — tat may, can xac nhan (ca khi khoa man hinh){_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/restart_now — khoi dong lai, can xac nhan{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/confirm_shutdown — xac nhan tat may{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         f"/confirm_restart — xac nhan khoi dong lai{_disabled_suffix(config.ENABLE_SHUTDOWN_RESTART)}",
         "",
-        "<b>Khac</b>",
+        "<b>[Ghi chu]</b>",
         f"/note noi dung — luu ghi chu vao may{_disabled_suffix(config.ENABLE_NOTE)}",
+        "",
+        "<b>[Service]</b>",
         f"/autostart — dang ky chay khi khoi dong may{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/autostart_off — go bo service khoi dong{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/service — xem service khoi dong da cai chua{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         "/reload — khoi dong lai listen (nap code, khong git pull)",
         "/service reload — giong /reload",
+        "",
+        "<b>[Cap nhat]</b>",
         f"/update — git pull va restart listen{_disabled_suffix(config.ENABLE_AUTO_UPDATE)}",
+        "",
+        "<b>[Menu]</b>",
         "/help — xem lai danh sach nay",
         "",
+        "Tin loading se co nhan group, vi du [VPN] / [Chup man hinh].",
         "Neu may da tat, moi lenh se khong co phan hoi.",
     ]
     return "\n".join(lines)
@@ -215,41 +275,41 @@ def build_help_text() -> str:
 def telegram_menu_commands() -> list:
     """Danh sach dang ky vao nut '/' tren Telegram (toi da 100 lenh)."""
     items = [
-        ("status", "Trang thai may, CPU/RAM, app dang mo"),
-        ("ping", "Kiem tra may con online"),
-        ("apps", "Ung dung / cua so dang mo"),
-        ("windows", "Giong /apps"),
-        ("cpu", "Phan tram CPU"),
-        ("ram", "Phan tram RAM"),
-        ("disk", "Dung luong o dia"),
-        ("procs", "Top tien trinh theo CPU"),
-        ("ip", "IP noi bo va cong khai"),
+        ("status", "[Trang thai] CPU/RAM, app dang mo"),
+        ("ping", "[Trang thai] Kiem tra may con online"),
+        ("cpu", "[Trang thai] Phan tram CPU"),
+        ("ram", "[Trang thai] Phan tram RAM"),
+        ("disk", "[Trang thai] Dung luong o dia"),
+        ("procs", "[Trang thai] Top tien trinh theo CPU"),
+        ("ip", "[Trang thai] IP noi bo va cong khai"),
+        ("apps", "[Ung dung] Cua so dang mo"),
+        ("windows", "[Ung dung] Giong /apps"),
     ]
     if config.ENABLE_SCREENSHOT:
-        items.append(("screenshot", "Chup man hinh"))
+        items.append(("screenshot", "[Chup] Chup man hinh"))
     if config.ENABLE_LOCK:
-        items.append(("lock", "Khoa man hinh"))
+        items.append(("lock", "[Ung dung] Khoa man hinh"))
     if config.ENABLE_CLOSE_APPS:
-        items.append(("close_apps", "Tat het ung dung dang mo"))
+        items.append(("close_apps", "[Ung dung] Tat het ung dung dang mo"))
     if config.ENABLE_VPN:
-        items.append(("vpn", "Danh sach / bat tat Pritunl VPN"))
-        items.append(("vpn_on", "Bat tat ca profile Pritunl"))
-        items.append(("vpn_off", "Tat tat ca profile Pritunl"))
+        items.append(("vpn", "[VPN] Danh sach / bat tat Pritunl"))
+        items.append(("vpn_on", "[VPN] Bat tat ca profile"))
+        items.append(("vpn_off", "[VPN] Tat tat ca profile"))
     if config.ENABLE_SHUTDOWN_RESTART:
-        items.append(("shutdown_now", "Tat may (can xac nhan)"))
-        items.append(("restart_now", "Khoi dong lai (can xac nhan)"))
-        items.append(("confirm_shutdown", "Xac nhan tat may"))
-        items.append(("confirm_restart", "Xac nhan khoi dong lai"))
+        items.append(("shutdown_now", "[Power] Tat may (can xac nhan)"))
+        items.append(("restart_now", "[Power] Khoi dong lai (can xac nhan)"))
+        items.append(("confirm_shutdown", "[Power] Xac nhan tat may"))
+        items.append(("confirm_restart", "[Power] Xac nhan khoi dong lai"))
     if config.ENABLE_NOTE:
-        items.append(("note", "Luu ghi chu vao may"))
+        items.append(("note", "[Ghi chu] Luu ghi chu vao may"))
     if config.ENABLE_AUTOSTART:
-        items.append(("autostart", "Dang ky chay khi khoi dong may"))
-        items.append(("autostart_off", "Go bo service khoi dong"))
-    items.append(("service", "Trang thai service khoi dong"))
-    items.append(("reload", "Khoi dong lai listen (nap code)"))
+        items.append(("autostart", "[Service] Dang ky chay khi khoi dong"))
+        items.append(("autostart_off", "[Service] Go bo service khoi dong"))
+    items.append(("service", "[Service] Trang thai service khoi dong"))
+    items.append(("reload", "[Service] Khoi dong lai listen"))
     if config.ENABLE_AUTO_UPDATE:
-        items.append(("update", "Git pull va restart listen"))
-    items.append(("help", "Danh sach toan bo lenh"))
+        items.append(("update", "[Cap nhat] Git pull va restart listen"))
+    items.append(("help", "[Menu] Danh sach toan bo lenh"))
     return [{"command": name, "description": desc} for name, desc in items]
 
 
