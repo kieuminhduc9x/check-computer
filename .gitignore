@@ -10,3 +10,5 @@ notes.txt
 __pycache__/
 *.pyc
 .autostart/
+.idea/
+.vscode/

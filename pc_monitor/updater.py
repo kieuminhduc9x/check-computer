@@ -32,6 +32,21 @@ def current_revision() -> str:
     return (result.stdout or "").strip() or "?"
 
 
+_SKIP_DIRTY_PREFIXES = (
+    ".idea/",
+    ".vscode/",
+    "__pycache__/",
+    ".autostart/",
+)
+
+
+def _is_skip_dirty(path: str) -> bool:
+    p = path.replace("\\", "/").lstrip("./")
+    if p.startswith(".idea") or p.startswith(".vscode"):
+        return True
+    return any(p.startswith(pref) or f"/{pref}" in f"/{p}" for pref in _SKIP_DIRTY_PREFIXES)
+
+
 def pull_ff_only() -> tuple[bool, str, bool]:
     """Tra ve (ok, thong_bao, co_code_moi). Khong merge neu local sua file."""
     try:
@@ -43,7 +58,10 @@ def pull_ff_only() -> tuple[bool, str, bool]:
             if not line.strip():
                 continue
             code = line[:2]
-            if code.strip() == "?" or code == "!!":
+            path = line[3:].strip().strip('"')
+            if code == "??" or code == "!!" or "?" in code:
+                continue
+            if _is_skip_dirty(path):
                 continue
             tracked_dirty.append(line)
         if tracked_dirty:
