@@ -71,11 +71,12 @@ def pull_ff_only() -> tuple[bool, str, bool]:
         return False, str(e), False
 
 
-def spawn_new_listener() -> None:
-    """Mo listen moi roi thoat process hien tai (instance moi se ghi de)."""
+def spawn_new_listener(*, notify_update: bool = True) -> None:
+    """Mo listen an (pythonw) roi thoat process hien tai."""
     try:
         config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
-        config.UPDATE_STAMP_FILE.write_text(str(time.time()), encoding="utf-8")
+        if notify_update:
+            config.UPDATE_STAMP_FILE.write_text(str(time.time()), encoding="utf-8")
     except OSError:
         pass
 
@@ -103,7 +104,7 @@ def spawn_new_listener() -> None:
 
     main_py = str(config.PROJECT_ROOT / "main.py")
     subprocess.Popen([python, "-u", main_py, "listen"], **kwargs)
-    telegram_api.log("Da spawn listen moi, thoat process cu de nap code.")
+    telegram_api.log("Da spawn listen an, thoat process cua so.")
     os._exit(0)
 
 

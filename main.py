@@ -8,6 +8,7 @@ Cach dung:
     python main.py heartbeat    -> bao may VAN DANG BAT (dinh ky)
     python main.py test         -> gui tin nhan thu de kiem tra cau hinh
     python main.py listen       -> chay nen lien tuc, lang nghe lenh Telegram
+    python main.py hide         -> chay listen AN (pythonw), tra cua so ve ngay
     python main.py install      -> dang ky service (Windows tu hoi quyen Admin / UAC)
     python main.py uninstall    -> go bo service tu khoi dong
     python main.py service      -> xem service da dang ky chua
@@ -22,6 +23,7 @@ from pc_monitor import commands
 from pc_monitor import telegram_api
 from pc_monitor import listener
 from pc_monitor import autostart
+from pc_monitor import updater
 
 
 def run_one_shot(event: str) -> None:
@@ -41,7 +43,7 @@ def run_one_shot(event: str) -> None:
 
 def main() -> None:
     valid = (
-        "startup", "shutdown", "heartbeat", "test", "listen",
+        "startup", "shutdown", "heartbeat", "test", "listen", "hide",
         "install", "uninstall", "service",
     )
     if len(sys.argv) < 2 or sys.argv[1] not in valid:
@@ -51,6 +53,9 @@ def main() -> None:
     event = sys.argv[1]
     if event == "listen":
         listener.run()
+    elif event == "hide":
+        print("Bat listen an (pythonw). Co the dong Git Bash.", flush=True)
+        updater.spawn_new_listener(notify_update=False)
     elif event in ("install", "uninstall", "service"):
         autostart.run_cli(event)
     else:
@@ -61,7 +66,12 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        telegram_api.log("Da dung (Ctrl+C).")
+        telegram_api.log("Ctrl+C: chuyen listen sang che do an (giong luc boot).")
+        try:
+            if len(sys.argv) > 1 and sys.argv[1] == "listen":
+                updater.spawn_new_listener(notify_update=False)
+        except Exception as e:
+            telegram_api.log(f"Khong spawn duoc listen an: {e}")
     except Exception as e:
         try:
             telegram_api.log(f"Crash: {e}")
