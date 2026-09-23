@@ -478,19 +478,22 @@ def _win_load_cli_result() -> tuple[bool, str] | None:
 
 def _win_run_as_admin(action_args: list[str]) -> tuple[int, str]:
     """Chay lai main.py / exe bang UAC (Run as administrator) va cho xong."""
+    src = Path(sys.executable).resolve() if config.is_frozen() else Path(_win_python())
+    if not src.exists():
+        return 1, f"Khong thay file chay: {src}"
+    python = _win_short_path(src)
     if config.is_frozen():
-        python = str(Path(sys.executable).resolve())
         args = list(action_args)
     else:
-        python = _win_python()
-        main_py = str(_project_dir() / "main.py")
-        args = [main_py, *action_args]
+        args = [_win_short_path(_project_dir() / "main.py"), *action_args]
+    wd = _win_short_path(_project_dir())
     ps_args = ", ".join(json.dumps(a) for a in args)
     ps = (
         "$ErrorActionPreference = 'Stop'\n"
         "try {\n"
         f"  $p = Start-Process -FilePath {json.dumps(python)} "
         f"-ArgumentList @({ps_args}) "
+        f"-WorkingDirectory {json.dumps(wd)} "
         "-Verb RunAs -Wait -PassThru\n"
         "  if ($null -eq $p) { exit 1223 }\n"
         "  exit $p.ExitCode\n"

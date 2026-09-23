@@ -179,14 +179,21 @@ def tracker_text(
     return f"[{label}] {cmd} XONG ({elapsed:.0f}s)"
 
 
-def send_tracker(chat_id: str, kind: str, waiting: int = 0) -> int:
+def send_tracker(
+    chat_id: str,
+    kind: str,
+    waiting: int = 0,
+    reply_to: int = 0,
+) -> int:
     """Tin vong doi: PC da nhan. Tra ve message_id de sua thanh XONG/LOI."""
     text = tracker_text(kind, "received", waiting=waiting)
-    for _ in range(3):
-        mid = telegram_api.send_plain(chat_id, text, timeout=6)
+    for attempt in range(8):
+        mid = telegram_api.send_plain(
+            chat_id, text, timeout=10, reply_to_message_id=reply_to
+        )
         if mid:
             return mid
-        time.sleep(0.5)
+        time.sleep(0.6 * (attempt + 1))
     telegram_api.log(f"Khong gui duoc tracker {kind} toi {chat_id}")
     return 0
 
@@ -199,6 +206,7 @@ def finish_tracker(
     elapsed: float = 0,
     err: str | None = None,
     timeout_sec: int = 0,
+    reply_to: int = 0,
 ) -> None:
     text = tracker_text(
         kind,
@@ -207,9 +215,16 @@ def finish_tracker(
         err=err,
         timeout_sec=timeout_sec,
     )
-    if message_id and telegram_api.edit_message(chat_id, message_id, text, timeout=6):
+    if message_id and telegram_api.edit_message(chat_id, message_id, text, timeout=8):
         return
-    telegram_api.reply(chat_id, text, parse_mode="", timeout=6)
+    for attempt in range(5):
+        mid = telegram_api.send_plain(
+            chat_id, text, timeout=10, reply_to_message_id=reply_to
+        )
+        if mid:
+            return
+        time.sleep(0.6 * (attempt + 1))
+    telegram_api.log(f"Khong gui duoc ket qua tracker {kind} toi {chat_id}")
 
 
 def send_loading(chat_id: str, kind: str, waiting: int = 0) -> bool:

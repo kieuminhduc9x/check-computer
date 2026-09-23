@@ -65,10 +65,11 @@ def _send_http(method: str, url: str, timeout: float, **kwargs):
             return last_resp
         raw = last_resp.headers.get("Retry-After", "1")
         try:
-            wait_s = min(float(raw), 8.0)
+            wait_s = min(float(raw), 20.0)
         except ValueError:
             wait_s = 1.0
-        time.sleep(max(0.4, wait_s))
+        log(f"Telegram 429, cho {wait_s:.0f}s roi gui lai ({method} {url.split('/')[-1]})")
+        time.sleep(max(0.6, wait_s))
     if last_resp is not None:
         return last_resp
     raise last_err or RuntimeError("Telegram HTTP that bai")
@@ -95,12 +96,16 @@ def _post_message(
     parse_mode: str = "",
     reply_markup: dict | None = None,
     timeout: int = 15,
+    reply_to_message_id: int = 0,
 ) -> tuple[bool, int]:
     data = {"chat_id": chat_id, "text": str(text)[:4000] or "(trong)"}
     if parse_mode:
         data["parse_mode"] = parse_mode
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
+    if reply_to_message_id:
+        data["reply_to_message_id"] = int(reply_to_message_id)
+        data["allow_sending_without_reply"] = "true"
     resp = _send_http("POST", _url("sendMessage"), timeout=timeout, data=data)
     try:
         result = resp.json()
@@ -115,10 +120,21 @@ def _post_message(
     return bool(result.get("ok")), mid
 
 
-def send_plain(chat_id: str, text: str, timeout: int = 6) -> int:
+def send_plain(
+    chat_id: str,
+    text: str,
+    timeout: int = 8,
+    reply_to_message_id: int = 0,
+) -> int:
     """Gui text thuong, tra ve message_id (0 neu that bai)."""
     try:
-        ok, mid = _post_message(chat_id, text, parse_mode="", timeout=timeout)
+        ok, mid = _post_message(
+            chat_id,
+            text,
+            parse_mode="",
+            timeout=timeout,
+            reply_to_message_id=reply_to_message_id,
+        )
         return mid if ok else 0
     except Exception as e:
         log(f"send_plain that bai: {e}")
@@ -275,14 +291,15 @@ def send_photo(chat_id: str, image_path: Path, caption: str = "") -> tuple[bool,
     """Gui anh. Tra ve (ok, thong_bao_loi). Mo lai file moi lan retry."""
     image_path = Path(image_path)
     last_err = "khong gui duoc anh"
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             with open(image_path, "rb") as f:
-                resp = _thread_session().post(
+                resp = _send_http(
+                    "POST",
                     _url("sendPhoto"),
-                    data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
-                    files={"photo": f},
-                    timeout=20,
+                    timeout=25,
+                    data={"chat_id": chat_id, "caption": caption},
+                    files={"photo": ("screen.jpg", f, "image/jpeg")},
                 )
             try:
                 result = resp.json()
@@ -290,22 +307,13 @@ def send_photo(chat_id: str, image_path: Path, caption: str = "") -> tuple[bool,
                 result = {}
             if result.get("ok"):
                 return True, ""
-            if resp.status_code == 429:
-                raw = resp.headers.get("Retry-After", "1")
-                try:
-                    wait_s = min(float(raw), 8.0)
-                except ValueError:
-                    wait_s = 1.0
-                time.sleep(wait_s)
-                last_err = "Telegram 429 (qua nhieu request)"
-                continue
             desc = result.get("description") or str(result)[:180]
             last_err = f"HTTP {resp.status_code}: {desc}"
             log(f"Telegram tra ve loi khi gui anh (lan {attempt + 1}): {result}")
         except Exception as e:
             last_err = str(e)
             log(f"Loi khi gui anh (lan {attempt + 1}): {e}")
-        time.sleep(0.5 * (attempt + 1))
+        time.sleep(0.8 * (attempt + 1))
     return False, last_err
 
 

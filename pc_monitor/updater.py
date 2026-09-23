@@ -198,6 +198,11 @@ def spawn_new_listener(*, notify_update: bool = True, kind: str | None = None) -
     else:
         cmd = [python, "-u", str(config.PROJECT_ROOT / "main.py"), "listen"]
     subprocess.Popen(cmd, **kwargs)
+    try:
+        from . import listener
+        listener.wait_other_jobs(8)
+    except Exception:
+        time.sleep(1)
     telegram_api.log("Da spawn listen an, thoat process cua so.")
     os._exit(0)
 

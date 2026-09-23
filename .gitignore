@@ -1,6 +1,7 @@
 .env
 *.log
 .update_offset
+.pending_commands
 .last_screenshot.png
 .last_ready_notify
 .listener.pid

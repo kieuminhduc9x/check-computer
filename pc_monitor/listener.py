@@ -3,11 +3,13 @@ listener.py - Vong lap chinh: lang nghe lenh Telegram (long polling) va
 dong thoi tu kiem tra CPU/RAM de canh bao neu vuot nguong.
 """
 
+import json
 import sys
 import time
 import signal
 import threading
 from collections import defaultdict
+from pathlib import Path
 
 import requests
 
@@ -17,6 +19,8 @@ from . import commands
 from . import system_info
 from . import autostart
 from . import updater
+
+PENDING_FILE = config.PROJECT_ROOT / ".pending_commands"
 
 POLL_TIMEOUT_SEC = 30
 RETRY_SLEEP_SEC = 10
@@ -67,7 +71,76 @@ def _dec_inflight(group: str) -> None:
         _group_inflight[group] = max(0, _group_inflight[group] - 1)
 
 
-def _enqueue(kind: str, chat_id: str, fn) -> None:
+def wait_other_jobs(timeout: float = 8) -> None:
+    """Cho lenh khac gui xong tin truoc khi /update /reload thoat process."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _inflight_lock:
+            n = _inflight
+        if n <= 1:
+            return
+        time.sleep(0.2)
+
+
+def _pending_load() -> list[dict]:
+    try:
+        raw = Path(PENDING_FILE).read_text(encoding="utf-8")
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _pending_save(items: list[dict]) -> None:
+    try:
+        Path(PENDING_FILE).write_text(
+            json.dumps(items[-40:], ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _pending_add(uid: int, chat_id: str, text: str) -> None:
+    items = [x for x in _pending_load() if x.get("uid") != uid]
+    items.append({"uid": uid, "chat_id": chat_id, "text": text, "ts": time.time()})
+    _pending_save(items)
+
+
+def _pending_done(uid: int) -> None:
+    _pending_save([x for x in _pending_load() if x.get("uid") != uid])
+
+
+def _notify_orphaned_commands() -> None:
+    items = _pending_load()
+    _pending_save([])
+    now = time.time()
+    for item in items:
+        try:
+            if now - float(item.get("ts") or 0) > 180:
+                continue
+            chat_id = str(item.get("chat_id") or "")
+            text = str(item.get("text") or "/lenh").split()[0][:40]
+            if chat_id not in config.ALLOWED_CHAT_IDS:
+                continue
+            telegram_api.reply(
+                chat_id,
+                f"Listen bi gian doan khi dang xu ly {text}.\n"
+                "PC van online. Gui lai lenh do.",
+                parse_mode="",
+            )
+        except Exception:
+            continue
+
+
+def _enqueue(
+    kind: str,
+    chat_id: str,
+    fn,
+    *,
+    reply_to: int = 0,
+    uid: int = 0,
+) -> None:
     """Nhan lenh xong spawn thread ngay. Poll khong bao gio cho lenh truoc."""
     global _inflight
     group = commands.command_group(kind)
@@ -95,6 +168,8 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
             kwargs={"parse_mode": "", "timeout": 3},
             daemon=True,
         ).start()
+        if uid:
+            _pending_done(uid)
         return
 
     def _job() -> None:
@@ -102,13 +177,18 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
         got_lock = False
         started = time.monotonic()
         try:
-            mid = commands.send_tracker(chat_id, kind, waiting)
+            mid = commands.send_tracker(chat_id, kind, waiting, reply_to=reply_to)
             box["mid"] = mid
             if exclusive:
                 got_lock = exclusive.acquire(blocking=False)
                 if not got_lock:
                     commands.finish_tracker(
-                        chat_id, mid, kind, "waiting", elapsed=time.monotonic() - started
+                        chat_id,
+                        mid,
+                        kind,
+                        "waiting",
+                        elapsed=time.monotonic() - started,
+                        reply_to=reply_to,
                     )
                     got_lock = exclusive.acquire(timeout=timeout_sec)
                     if not got_lock:
@@ -118,7 +198,9 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
                             f"Group khac van nhan lenh. Gui lai {kind}."
                         )
                         return
-                    commands.finish_tracker(chat_id, mid, kind, "received", waiting=0)
+                    commands.finish_tracker(
+                        chat_id, mid, kind, "received", reply_to=reply_to
+                    )
             fn()
             box["status"] = "ok"
         except Exception as e:
@@ -130,7 +212,14 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
                 exclusive.release()
             elapsed = time.monotonic() - started
             if box["status"] == "ok":
-                commands.finish_tracker(chat_id, box.get("mid") or 0, kind, "ok", elapsed=elapsed)
+                commands.finish_tracker(
+                    chat_id,
+                    box.get("mid") or 0,
+                    kind,
+                    "ok",
+                    elapsed=elapsed,
+                    reply_to=reply_to,
+                )
             elif box["status"] == "err":
                 commands.finish_tracker(
                     chat_id,
@@ -139,7 +228,10 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
                     "err",
                     elapsed=elapsed,
                     err=str(box.get("err") or "loi"),
+                    reply_to=reply_to,
                 )
+            if uid:
+                _pending_done(uid)
             done.set()
             _dec_inflight(group)
 
@@ -153,6 +245,7 @@ def _enqueue(kind: str, chat_id: str, fn) -> None:
                     kind,
                     "timeout",
                     timeout_sec=timeout_sec,
+                    reply_to=reply_to,
                 )
 
     box: dict = {"mid": 0, "status": "pending", "err": None}
@@ -301,6 +394,10 @@ def run() -> None:
         telegram_api.log(f"Khong cap nhat duoc Startup: {e}")
     telegram_api.clear_webhook()
     telegram_api.set_my_commands(commands.telegram_menu_commands())
+    try:
+        _notify_orphaned_commands()
+    except Exception as e:
+        telegram_api.log(f"Bo qua pending cu: {e}")
 
     ready_thread = threading.Thread(target=_notify_service_ready, daemon=True)
     ready_thread.start()
@@ -344,20 +441,20 @@ def run() -> None:
                     "Telegram Conflict: con listen khac cung BOT_TOKEN "
                     "(service an / terminal khac / may khac). Dang ghi de tren may nay..."
                 )
-                threading.Thread(
-                    target=autostart.takeover_existing_listener,
-                    daemon=True,
-                    name="takeover",
-                ).start()
+                try:
+                    autostart.takeover_existing_listener()
+                except Exception as e:
+                    telegram_api.log(f"Takeover that bai: {e}")
+                time.sleep(2)
             else:
                 telegram_api.log(f"Telegram tra ve loi: {result}. Thu lai sau {RETRY_SLEEP_SEC}s")
-            time.sleep(RETRY_SLEEP_SEC)
+                time.sleep(RETRY_SLEEP_SEC)
             continue
 
         for update in result.get("result", []):
             try:
-                offset = update["update_id"] + 1
-                _save_offset(offset)
+                update_id = int(update["update_id"])
+                offset = update_id + 1
 
                 callback = update.get("callback_query")
                 if callback:
@@ -366,6 +463,7 @@ def run() -> None:
                     chat = msg.get("chat") or callback.get("from") or {}
                     chat_id = str(chat.get("id", ""))
                     data = str(callback.get("data") or "")
+                    reply_to = int(msg.get("message_id") or 0)
                     threading.Thread(
                         target=telegram_api.answer_callback_query,
                         args=(cq_id, "Dang xu ly..."),
@@ -373,11 +471,17 @@ def run() -> None:
                     ).start()
                     if chat_id not in config.ALLOWED_CHAT_IDS:
                         telegram_api.log(f"Bo qua callback tu chat_id khong duoc phep: {chat_id}")
+                        _save_offset(offset)
                         continue
+                    telegram_api.log(f"Nhan nut {data[:40]} tu {chat_id}")
+                    _pending_add(update_id, chat_id, f"nut:{data[:24]}")
+                    _save_offset(offset)
                     _enqueue(
                         f"nut:{data[:24]}",
                         chat_id,
                         lambda cid=chat_id, payload=data: commands.handle_callback(cid, payload),
+                        reply_to=reply_to,
+                        uid=update_id,
                     )
                     continue
 
@@ -385,13 +489,20 @@ def run() -> None:
                 chat = message.get("chat") or {}
                 text = (message.get("text") or "").strip()
                 chat_id = str(chat.get("id", ""))
+                reply_to = int(message.get("message_id") or 0)
 
                 if chat_id not in config.ALLOWED_CHAT_IDS:
                     telegram_api.log(f"Bo qua tin nhan tu chat_id khong duoc phep: {chat_id}")
+                    _save_offset(offset)
                     continue
 
                 if not text:
+                    _save_offset(offset)
                     continue
+
+                telegram_api.log(f"Nhan {text.split()[0][:40]} tu {chat_id}")
+                _pending_add(update_id, chat_id, text)
+                _save_offset(offset)
 
                 def _job(cid=chat_id, body=text):
                     handled = commands.dispatch(cid, body)
@@ -404,9 +515,19 @@ def run() -> None:
                                 parse_mode="HTML",
                             )
 
-                _enqueue(text.split()[0][:24], chat_id, _job)
+                _enqueue(
+                    text.split()[0][:24],
+                    chat_id,
+                    _job,
+                    reply_to=reply_to,
+                    uid=update_id,
+                )
             except Exception as e:
                 telegram_api.log(f"Loi khi xu ly update: {e}")
+                try:
+                    _save_offset(int(update.get("update_id") or 0) + 1)
+                except Exception:
+                    pass
                 chat_id = ""
                 try:
                     msg = (update.get("callback_query") or {}).get("message") or update.get("message") or {}
