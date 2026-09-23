@@ -102,6 +102,11 @@ def _clear_stale_lock() -> None:
 
 def pull_ff_only() -> tuple[bool, str, bool]:
     """Tra ve (ok, thong_bao, co_code_moi). Khong merge neu local sua file."""
+    if config.is_frozen():
+        return False, (
+            "Ban dang chay file .exe — /update (git pull) khong dung duoc. "
+            "Hay build exe moi roi copy de file cu, hoac dung ban Python + git."
+        ), False
     if not _git_lock.acquire(timeout=3):
         return False, "Dang co git khac chay. Gui lai /update sau 20 giay.", False
     try:
@@ -167,7 +172,7 @@ def spawn_new_listener(*, notify_update: bool = True, kind: str | None = None) -
         pass
 
     python = sys.executable
-    if os.name == "nt":
+    if os.name == "nt" and not config.is_frozen():
         pythonw = Path(python).with_name("pythonw.exe")
         if pythonw.exists():
             python = str(pythonw)
@@ -188,8 +193,11 @@ def spawn_new_listener(*, notify_update: bool = True, kind: str | None = None) -
     else:
         kwargs["start_new_session"] = True
 
-    main_py = str(config.PROJECT_ROOT / "main.py")
-    subprocess.Popen([python, "-u", main_py, "listen"], **kwargs)
+    if config.is_frozen():
+        cmd = [str(Path(sys.executable).resolve()), "listen"]
+    else:
+        cmd = [python, "-u", str(config.PROJECT_ROOT / "main.py"), "listen"]
+    subprocess.Popen(cmd, **kwargs)
     telegram_api.log("Da spawn listen an, thoat process cua so.")
     os._exit(0)
 

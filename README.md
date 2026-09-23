@@ -186,7 +186,7 @@ Neu Telegram **khong phan hoi** tren Windows:
 3. Khong dung Python cai tu Microsoft Store. Cai tu https://python.org
    va tick **"Add python.exe to PATH"**.
 4. Xem `pc_monitor.log` va `pc_monitor_task.log` trong thu muc project.
-5. Task Scheduler -> `PCMonitorPro_Listener` -> Last Run Result phai la `0x0`.
+5. Task Scheduler -> `PC Monitor - Lắng nghe Telegram` -> Last Run Result phai la `0x0`.
 
 Hoac chay script:
 
@@ -196,8 +196,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 .\setup_task_scheduler.ps1
 ```
 
-Tao 3 task: `PCMonitorPro_Startup`, `PCMonitorPro_Heartbeat`,
-`PCMonitorPro_Listener`. Kiem tra trong **Task Scheduler**.
+Tao 3 task: `PC Monitor - Báo máy vừa bật`, `PC Monitor - Máy còn online`,
+`PC Monitor - Lắng nghe Telegram`. Kiem tra trong **Task Scheduler**.
 
 **Go bo:** `python main.py uninstall` hoac `.\setup_task_scheduler.ps1 -Uninstall`
 

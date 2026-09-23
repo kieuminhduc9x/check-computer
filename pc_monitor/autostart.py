@@ -29,15 +29,33 @@ LINUX_UNITS = (
     "pcmonitor-heartbeat.service",
     "pcmonitor-heartbeat.timer",
 )
-WIN_TASKS = (
+# Ten hien thi tren Task Scheduler / Startup (tieng Viet, de nhan).
+WIN_TASK_STARTUP = "PC Monitor - Báo máy vừa bật"
+WIN_TASK_LISTENER = "PC Monitor - Lắng nghe Telegram"
+WIN_TASK_HEARTBEAT = "PC Monitor - Máy còn online"
+WIN_TASKS = (WIN_TASK_STARTUP, WIN_TASK_LISTENER, WIN_TASK_HEARTBEAT)
+WIN_TASK_DESC = {
+    WIN_TASK_STARTUP: "Gửi tin báo máy vừa bật lên Telegram khi đăng nhập Windows",
+    WIN_TASK_LISTENER: "Lắng nghe lệnh Telegram: screenshot, VPN, tắt máy...",
+    WIN_TASK_HEARTBEAT: "Gửi tin máy còn online định kỳ",
+}
+WIN_FILE_STARTUP_CMD = "PC Monitor - Bao may vua bat.cmd"
+WIN_FILE_LISTENER_VBS = "PC Monitor - Lang nghe Telegram.vbs"
+WIN_STARTUP_CMDS = (
+    WIN_FILE_STARTUP_CMD,
+    WIN_FILE_LISTENER_VBS,
+)
+# Ten cu — van xoa khi cai/go de khong de trung 2 bo.
+WIN_TASKS_LEGACY = (
     "PCMonitorPro_Startup",
     "PCMonitorPro_Listener",
     "PCMonitorPro_Heartbeat",
 )
-WIN_STARTUP_CMDS = (
+WIN_STARTUP_LEGACY = (
     "PCMonitorPro_Startup.cmd",
     "PCMonitorPro_Listener.vbs",
     "PCMonitorPro_Listener.cmd",
+    "PCMonitorPro_Listener.bat",
 )
 
 
@@ -331,15 +349,20 @@ def _write_vbs(path: Path, content: str) -> None:
 def _win_write_listen_vbs() -> Path:
     """Chay listener an, khong mo cua so CMD (tranh bi tat nham luc dang nhap)."""
     dest = _win_autostart_dir() / "listen.vbs"
-    pythonw = _vbs_quote(_win_short_path(_win_pythonw()))
-    main_py = _vbs_quote(_win_short_path(_project_dir() / "main.py"))
     project = _vbs_quote(_win_short_path(_project_dir()))
+    if config.is_frozen():
+        exe = _vbs_quote(_win_short_path(sys.executable))
+        run_line = f"sh.Run \"\"\"{exe}\"\" listen\", 0, False\r\n"
+    else:
+        pythonw = _vbs_quote(_win_short_path(_win_pythonw()))
+        main_py = _vbs_quote(_win_short_path(_project_dir() / "main.py"))
+        run_line = f"sh.Run \"\"\"{pythonw}\"\" -u \"\"{main_py}\"\" listen\", 0, False\r\n"
     _write_vbs(
         dest,
         "On Error Resume Next\r\n"
         "Set sh = CreateObject(\"WScript.Shell\")\r\n"
         f"sh.CurrentDirectory = \"{project}\"\r\n"
-        f"sh.Run \"\"\"{pythonw}\"\" -u \"\"{main_py}\"\" listen\", 0, False\r\n",
+        + run_line,
     )
     return dest
 
@@ -351,13 +374,13 @@ def refresh_windows_startup() -> str:
     dest_dir = _win_startup_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
     removed = []
-    for name in ("PCMonitorPro_Listener.cmd", "PCMonitorPro_Listener.bat"):
+    for name in WIN_STARTUP_LEGACY:
         old = dest_dir / name
         if old.exists():
             old.unlink()
             removed.append(name)
     vbs = _win_write_listen_vbs()
-    dest = dest_dir / "PCMonitorPro_Listener.vbs"
+    dest = dest_dir / WIN_FILE_LISTENER_VBS
     dest.write_bytes(vbs.read_bytes())
     try:
         _run(
@@ -375,15 +398,19 @@ def refresh_windows_startup() -> str:
 
 def _win_write_cmd(name: str, action: str) -> Path:
     dest = _win_autostart_dir() / f"{name}.cmd"
-    python = _win_python()
-    main_py = _project_dir() / "main.py"
     log_file = _project_dir() / "pc_monitor_task.log"
+    if config.is_frozen():
+        runner = f'"{_python_bin()}" {action} >> "{log_file}" 2>&1\r\n'
+    else:
+        python = _win_python()
+        main_py = _project_dir() / "main.py"
+        runner = f'"{python}" -u "{main_py}" {action} >> "{log_file}" 2>&1\r\n'
     dest.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         f'cd /d "{_project_dir()}"\r\n'
         "set PYTHONUNBUFFERED=1\r\n"
-        f'"{python}" -u "{main_py}" {action} >> "{log_file}" 2>&1\r\n',
+        + runner,
         encoding="utf-8-sig",
     )
     return dest
@@ -398,16 +425,22 @@ def _schtasks(args: list[str], timeout: int = 8) -> subprocess.CompletedProcess:
 
 def _win_create_task(name: str, script: Path, extra: list[str]) -> subprocess.CompletedProcess:
     tr = f'"{script}"'
+    desc = WIN_TASK_DESC.get(name, "")
+    desc_args = ["/D", desc] if desc else []
     create = [
         "schtasks", "/Create", "/F",
         "/TN", name,
         "/TR", tr,
+        *desc_args,
         *extra,
     ]
     result = _run(create)
     if result.returncode != 0 and "/DELAY" in extra:
         stripped = [item for item in extra if item not in ("/DELAY", "0000:30")]
-        create = ["schtasks", "/Create", "/F", "/TN", name, "/TR", tr, *stripped]
+        create = [
+            "schtasks", "/Create", "/F", "/TN", name, "/TR", tr,
+            *desc_args, *stripped,
+        ]
         result = _run(create)
     return result
 
@@ -444,10 +477,14 @@ def _win_load_cli_result() -> tuple[bool, str] | None:
 
 
 def _win_run_as_admin(action_args: list[str]) -> tuple[int, str]:
-    """Chay lai main.py bang UAC (Run as administrator) va cho xong."""
-    python = _win_python()
-    main_py = str(_project_dir() / "main.py")
-    args = [main_py, *action_args]
+    """Chay lai main.py / exe bang UAC (Run as administrator) va cho xong."""
+    if config.is_frozen():
+        python = str(Path(sys.executable).resolve())
+        args = list(action_args)
+    else:
+        python = _win_python()
+        main_py = str(_project_dir() / "main.py")
+        args = [main_py, *action_args]
     ps_args = ", ".join(json.dumps(a) for a in args)
     ps = (
         "$ErrorActionPreference = 'Stop'\n"
@@ -528,13 +565,39 @@ def _win_startup_dir() -> Path:
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
+def _win_cleanup_legacy() -> list[str]:
+    """Xoa ten cu PCMonitorPro_* de khong de 2 bo task/Startup."""
+    notes = []
+    dest_dir = _win_startup_dir()
+    for name in WIN_TASKS_LEGACY:
+        result = _schtasks(["/Delete", "/F", "/TN", name])
+        if result.returncode == 0:
+            notes.append(f"- Da go ten cu: {name}")
+    for name in WIN_STARTUP_LEGACY:
+        path = dest_dir / name
+        if path.exists():
+            try:
+                path.unlink()
+                notes.append(f"- Da xoa Startup cu: {name}")
+            except OSError:
+                pass
+    return notes
+
+
 def _install_windows_startup_folder(cmds: dict[str, Path]) -> tuple[bool, str]:
     dest_dir = _win_startup_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
-    listen_vbs = _win_write_listen_vbs()
+    for name in WIN_STARTUP_LEGACY:
+        old = dest_dir / name
+        if old.exists():
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    listen_vbs = cmds.get("listener") or _win_write_listen_vbs()
     mapping = [
-        ("PCMonitorPro_Startup.cmd", cmds["PCMonitorPro_Startup"]),
-        ("PCMonitorPro_Listener.vbs", listen_vbs),
+        (WIN_FILE_STARTUP_CMD, cmds["startup"]),
+        (WIN_FILE_LISTENER_VBS, listen_vbs),
     ]
     lines = [
         "Da dang ky thu muc Startup (an, khong mo CMD):",
@@ -558,12 +621,16 @@ def _install_windows_startup_folder(cmds: dict[str, Path]) -> tuple[bool, str]:
 def _uninstall_windows_startup_folder() -> list[str]:
     dest_dir = _win_startup_dir()
     notes = []
-    for name in WIN_STARTUP_CMDS:
+    seen = set()
+    for name in (*WIN_STARTUP_CMDS, *WIN_STARTUP_LEGACY):
+        if name in seen:
+            continue
+        seen.add(name)
         path = dest_dir / name
         if path.exists():
             path.unlink()
             notes.append(f"- Startup {name}: da xoa")
-        else:
+        elif name in WIN_STARTUP_CMDS:
             notes.append(f"- Startup {name}: khong co")
     return notes
 
@@ -575,8 +642,8 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         ok, msg = elevated
         if msg == "UAC_CANCELED":
             cmds = {
-                "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
-                "PCMonitorPro_Listener": _win_write_listen_vbs(),
+                "startup": _win_write_cmd("startup", "startup"),
+                "listener": _win_write_listen_vbs(),
             }
             fallback_ok, fallback = _install_windows_startup_folder(cmds)
             return fallback_ok, (
@@ -599,18 +666,19 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
         )
 
     cmds = {
-        "PCMonitorPro_Startup": _win_write_cmd("startup", "startup"),
-        "PCMonitorPro_Listener": _win_write_listen_vbs(),
-        "PCMonitorPro_Heartbeat": _win_write_cmd("heartbeat", "heartbeat"),
+        "startup": _win_write_cmd("startup", "startup"),
+        "listener": _win_write_listen_vbs(),
+        "heartbeat": _win_write_cmd("heartbeat", "heartbeat"),
     }
     specs = [
-        ("PCMonitorPro_Startup", ["/SC", "ONLOGON", "/DELAY", "0000:30"]),
-        ("PCMonitorPro_Listener", ["/SC", "ONLOGON", "/DELAY", "0000:30"]),
-        ("PCMonitorPro_Heartbeat", ["/SC", "MINUTE", "/MO", str(minutes)]),
+        (WIN_TASK_STARTUP, "startup", ["/SC", "ONLOGON", "/DELAY", "0000:30"]),
+        (WIN_TASK_LISTENER, "listener", ["/SC", "ONLOGON", "/DELAY", "0000:30"]),
+        (WIN_TASK_HEARTBEAT, "heartbeat", ["/SC", "MINUTE", "/MO", str(minutes)]),
     ]
     lines = ["Da dang ky Task Scheduler (chay khi dang nhap):"]
-    for name, extra in specs:
-        result = _win_create_task(name, cmds[name], extra)
+    lines.extend(_win_cleanup_legacy())
+    for name, role, extra in specs:
+        result = _win_create_task(name, cmds[role], extra)
         if result.returncode != 0:
             err = _win_err_text(result)
             if _win_access_denied(err):
@@ -631,7 +699,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
                 return False, prefix + "\nKhong ghi duoc thu muc Startup: " + fallback
             return False, f"schtasks {name} that bai: {err or result.returncode}"
         extra_note = ""
-        if name == "PCMonitorPro_Listener" and running_as_listener() and not start_listener_now:
+        if name == WIN_TASK_LISTENER and running_as_listener() and not start_listener_now:
             extra_note = " (giu listener hien tai)"
         lines.append(f"- {name}: OK{extra_note}")
 
@@ -639,8 +707,8 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
     lines.append(startup_msg)
 
     if start_listener_now and not running_as_listener():
-        started = _schtasks(["/Run", "/TN", "PCMonitorPro_Listener"])
-        ping = _schtasks(["/Run", "/TN", "PCMonitorPro_Startup"])
+        started = _schtasks(["/Run", "/TN", WIN_TASK_LISTENER])
+        ping = _schtasks(["/Run", "/TN", WIN_TASK_STARTUP])
         if started.returncode == 0:
             lines.append("- Da start listener ngay (khong can doi dang nhap lai)")
         else:
@@ -653,7 +721,7 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
             lines.append("- Da gui tin startup toi Telegram de kiem tra phan hoi")
         lines.append("Neu van im lang: xem pc_monitor.log va pc_monitor_task.log")
 
-    lines.append("Kiem tra: schtasks /Query /TN PCMonitorPro_Listener")
+    lines.append(f'Kiem tra: Task Scheduler -> "{WIN_TASK_LISTENER}"')
     return True, "\n".join(lines)
 
 
@@ -673,7 +741,7 @@ def _uninstall_windows() -> tuple[bool, str]:
         return ok, msg
 
     lines = ["Da go Task Scheduler:"]
-    for name in WIN_TASKS:
+    for name in (*WIN_TASKS, *WIN_TASKS_LEGACY):
         _schtasks(["/Delete", "/F", "/TN", name])
         lines.append(f"- {name}: da xoa (neu co)")
     lines.append("Thu muc Startup:")
@@ -754,9 +822,15 @@ def takeover_requested() -> bool:
 
 
 def _is_listen_cmdline(parts: list[str], project: str) -> bool:
-    if "listen" not in parts:
+    if "listen" not in [p.lower() for p in parts]:
         return False
-    return any("main.py" in p.replace("\\", "/") for p in parts)
+    for p in parts:
+        n = p.replace("\\", "/").lower()
+        if project and project in n and ("main.py" in n or n.endswith(".exe")):
+            return True
+        if Path(p).name.lower() in ("pcmonitor.exe", "pcmonitorpro.exe"):
+            return True
+    return False
 
 
 def _own_process_tree_pids() -> set[int]:
@@ -816,9 +890,10 @@ def _pause_managed_listener() -> list[str]:
     system = _os()
     try:
         if system == "Windows":
-            result = _run(["schtasks", "/End", "/TN", "PCMonitorPro_Listener"], timeout=5)
-            if result.returncode == 0:
-                notes.append("Da dung task PCMonitorPro_Listener (lich van giu)")
+            for name in (WIN_TASK_LISTENER, "PCMonitorPro_Listener"):
+                result = _run(["schtasks", "/End", "/TN", name], timeout=5)
+                if result.returncode == 0:
+                    notes.append(f"Da dung task {name} (lich van giu)")
             return notes
         if system == "Darwin":
             _, domain = _macos_uid_domain()
@@ -926,17 +1001,22 @@ def _is_autostart_registered(*, skip_schtasks: bool = False) -> tuple[bool, str]
     """Listener co duoc dang ky chay luc dang nhap khong."""
     system = _os()
     if system == "Windows":
-        startup = _win_startup_dir() / "PCMonitorPro_Listener.vbs"
-        startup_cmd = _win_startup_dir() / "PCMonitorPro_Listener.cmd"
-        if startup.exists() or startup_cmd.exists():
+        dest_dir = _win_startup_dir()
+        startup_files = (
+            dest_dir / WIN_FILE_LISTENER_VBS,
+            dest_dir / "PCMonitorPro_Listener.vbs",
+            dest_dir / "PCMonitorPro_Listener.cmd",
+        )
+        if any(path.exists() for path in startup_files):
             return True, "Thu muc Startup (chay an luc dang nhap)"
         if skip_schtasks:
             return False, "Khong thay file Startup (bo qua Task Scheduler de khong treo)"
-        task = _schtasks(["/Query", "/TN", "PCMonitorPro_Listener"], timeout=2)
-        if task.returncode == 0:
-            return True, "Task Scheduler: PCMonitorPro_Listener"
-        if task.returncode == 124 or (task.stderr or "") == "timeout":
-            return False, "Task Scheduler cham sau reboot, chua xac dinh duoc"
+        for name in (WIN_TASK_LISTENER, "PCMonitorPro_Listener"):
+            task = _schtasks(["/Query", "/TN", name], timeout=2)
+            if task.returncode == 0:
+                return True, f"Task Scheduler: {name}"
+            if task.returncode == 124 or (task.stderr or "") == "timeout":
+                return False, "Task Scheduler cham sau reboot, chua xac dinh duoc"
         return False, "Chua co task Listener va chua co file Startup"
     if system == "Darwin":
         dest = _macos_plist_path("listener")

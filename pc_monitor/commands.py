@@ -726,7 +726,7 @@ def _cmd_service(chat_id: str, args: str) -> None:
             telegram_api.reply(
                 chat_id,
                 "SERVICE: listen dang tra loi. Autostart: xem file Startup "
-                "(PCMonitorPro_Listener.vbs).",
+                "(PC Monitor - Lang nghe Telegram.vbs).",
                 parse_mode="",
             )
 

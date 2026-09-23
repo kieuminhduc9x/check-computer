@@ -17,13 +17,26 @@ except ImportError:
     print("Chay: pip install -r requirements.txt")
     sys.exit(1)
 
-# Thu muc goc cua project (noi chua file .env, main.py, requirements.txt)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Thu muc goc: source = folder chua main.py; ban exe = folder chua file .exe
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _project_root() -> Path:
+    if is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _project_root()
 ENV_PATH = PROJECT_ROOT / ".env"
 
 if not ENV_PATH.exists():
     print(f"LOI: khong tim thay file .env tai {ENV_PATH}")
-    print("Hay copy .env.example thanh .env va dien thong tin cua ban.")
+    if is_frozen():
+        print("Dat file .env CUNG THU MUC voi file .exe (copy tu .env.example, dien token).")
+    else:
+        print("Hay copy .env.example thanh .env va dien thong tin cua ban.")
     sys.exit(1)
 
 load_dotenv(ENV_PATH)
@@ -76,7 +89,7 @@ READY_STAMP_FILE = PROJECT_ROOT / ".last_ready_notify"
 LISTENER_PID_FILE = PROJECT_ROOT / ".listener.pid"
 TAKEOVER_FILE = PROJECT_ROOT / ".listener.takeover"
 UPDATE_STAMP_FILE = PROJECT_ROOT / ".last_code_update"
-ENABLE_AUTO_UPDATE = _get_bool("ENABLE_AUTO_UPDATE", True)
+ENABLE_AUTO_UPDATE = _get_bool("ENABLE_AUTO_UPDATE", True) and not is_frozen()
 AUTO_UPDATE_MINUTES = max(0, _get_int("AUTO_UPDATE_MINUTES", 60))
 
 
