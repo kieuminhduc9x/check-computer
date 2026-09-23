@@ -656,7 +656,11 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
     force = arg in ("force", "reinstall", "again")
 
     def _run() -> None:
-        if not force:
+        need_boot = False
+        if platform.system() == "Windows":
+            boot_state = autostart.windows_boot_registered()
+            need_boot = boot_state is False
+        if not force and not need_boot:
             try:
                 already, detail = autostart.is_registered()
             except Exception:
@@ -672,11 +676,18 @@ def _cmd_autostart(chat_id: str, args: str) -> None:
                 )
                 return
         if platform.system() == "Windows":
+            extra = ""
+            if need_boot:
+                extra = (
+                    "\nChua co task <b>Chạy trước đăng nhập</b>. "
+                    "Lan restart vua roi listen chua chay vi task nay chua duoc tao."
+                )
             telegram_api.send_message(
                 chat_id,
                 "Dang mo hop thoai Administrator (UAC) tren may Windows.\n"
                 "Hay bam <b>Yes</b> tren man hinh may (khong bam duoc tu Telegram).\n"
-                "Hoac tren may chay: <code>python main.py install</code>.",
+                "Hoac tren may chay: <code>python main.py install</code>."
+                + extra,
             )
         ok, msg = autostart.install(start_listener_now=False)
         prefix = (

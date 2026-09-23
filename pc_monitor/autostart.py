@@ -447,29 +447,82 @@ def refresh_windows_startup() -> str:
     return f"Da cap nhat Startup an -> {dest}.{extra}"
 
 
-def _win_write_boot_cmd() -> Path:
-    """Task ONSTART /RU SYSTEM: listen truoc khi co nguoi dang nhap."""
-    dest = _win_autostart_dir() / "boot.cmd"
-    log_file = _project_dir() / "pc_monitor_task.log"
+def _win_public_dir() -> Path:
+    """Duong dan ASCII. User ghi duoc, SYSTEM chay duoc truoc khi dang nhap.
+    Thu muc project co tieng Viet thi Task Scheduler / UAC hay bao khong tim thay file."""
+    public = os.environ.get("PUBLIC") or r"C:\Users\Public"
+    path = Path(public) / "PCMonitor"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def _win_console_python() -> str:
     if config.is_frozen():
-        runner = f'"{Path(sys.executable).resolve()}" listen-boot >> "{log_file}" 2>&1'
+        return str(Path(sys.executable).resolve())
+    exe = Path(_win_python())
+    if exe.name.lower() == "pythonw.exe":
+        console = exe.with_name("python.exe")
+        if console.exists():
+            return str(console)
+    return str(exe)
+
+
+def _write_windows_launchers() -> Path:
+    """boot.cmd (ASCII) + boot.ps1 / elevate.ps1 (UTF-8, duong dan that)."""
+    folder = _win_public_dir()
+    project = str(_project_dir().resolve())
+    program = _win_console_python()
+    log_file = folder / "boot.log"
+    if config.is_frozen():
+        launch = f"& {_ps_quote(program)} 'listen-boot'"
+        elevate_argv = "'install','--elevated'"
     else:
-        runner = (
-            f'"{_win_pythonw()}" -u "{_project_dir() / "main.py"}" listen-boot'
-            f' >> "{log_file}" 2>&1'
-        )
-    dest.write_text(
+        main_py = str(Path(project) / "main.py")
+        launch = f"& {_ps_quote(program)} '-u' {_ps_quote(main_py)} 'listen-boot'"
+        elevate_argv = f"'-u' {_ps_quote(main_py)} 'install' '--elevated'"
+    boot_ps1 = f"""$ErrorActionPreference = 'Continue'
+$log = {_ps_quote(str(log_file))}
+$proj = {_ps_quote(project)}
+function Write-Boot([string]$Message) {{
+  $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $Message
+  Add-Content -LiteralPath $log -Value $line -Encoding UTF8
+}}
+Write-Boot 'task boot start'
+Write-Boot ('proj=' + $proj)
+Set-Location -LiteralPath $proj
+while ($true) {{
+  Write-Boot 'spawn listen-boot'
+  {launch} *>> $log
+  Write-Boot ('exit ' + $LASTEXITCODE)
+  Start-Sleep -Seconds 20
+}}
+"""
+    elevate_ps1 = f"""$ErrorActionPreference = 'Stop'
+$proj = {_ps_quote(project)}
+Set-Location -LiteralPath $proj
+& {_ps_quote(program)} {elevate_argv}
+exit $LASTEXITCODE
+"""
+    (folder / "boot.ps1").write_text(boot_ps1, encoding="utf-8-sig")
+    (folder / "elevate.ps1").write_text(elevate_ps1, encoding="utf-8-sig")
+    boot_cmd = folder / "boot.cmd"
+    boot_cmd.write_text(
         "@echo off\r\n"
-        f'cd /d "{_project_dir()}"\r\n'
-        "set PYTHONUNBUFFERED=1\r\n"
-        "set PCMONITOR_ROLE=boot\r\n"
-        ":again\r\n"
-        f"{runner}\r\n"
-        "timeout /t 20 /nobreak >nul\r\n"
-        "goto again\r\n",
-        encoding="utf-8-sig",
+        "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" "
+        "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden "
+        f"-File \"{folder / 'boot.ps1'}\"\r\n",
+        encoding="ascii",
     )
-    return dest
+    return boot_cmd
+
+
+def _win_write_boot_cmd() -> Path:
+    """Task ONSTART /RU SYSTEM: file ASCII trong Public, khong nam trong thu muc tieng Viet."""
+    return _write_windows_launchers()
 
 
 def _install_windows_boot_task() -> tuple[bool, str]:
@@ -487,7 +540,9 @@ def _install_windows_boot_task() -> tuple[bool, str]:
             return True, (
                 f"- {WIN_TASK_BOOT}: OK\n"
                 "  Chay khi Windows bat, truoc man hinh dang nhap.\n"
-                "  Sau khi dang nhap thi nhuong cho listen desktop."
+                "  File: C:\\Users\\Public\\PCMonitor\\boot.cmd\n"
+                "  Log: C:\\Users\\Public\\PCMonitor\\boot.log\n"
+                "  Can RESTART may va dung o man hinh dang nhap de thu /status."
             )
         last = _win_err_text(result)
     return False, (
@@ -576,24 +631,43 @@ def _win_load_cli_result() -> tuple[bool, str] | None:
     return first.strip() == "OK", rest.strip() or text.strip()
 
 
+def windows_boot_registered() -> bool | None:
+    """True/False neu hoi duoc Task Scheduler. None neu schtasks treo."""
+    if _os() != "Windows":
+        return True
+    result = _schtasks(["/Query", "/TN", WIN_TASK_BOOT], timeout=5)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 124 or (result.stderr or "") == "timeout":
+        return None
+    return False
+
+
 def _win_run_as_admin(action_args: list[str]) -> tuple[int, str]:
-    """Chay lai main.py / exe bang UAC (Run as administrator) va cho xong."""
-    src = Path(sys.executable).resolve() if config.is_frozen() else Path(_win_python())
-    if not src.exists():
-        return 1, f"Khong thay file chay: {src}"
-    python = _win_short_path(src)
+    """UAC chay elevate.ps1 o duong dan ASCII. Khong Start-Process thang file trong thu muc tieng Viet."""
+    try:
+        folder = _write_windows_launchers().parent
+    except OSError as e:
+        return 1, f"Khong ghi duoc C:\\Users\\Public\\PCMonitor: {e}"
+    elevate = folder / "elevate.ps1"
+    program = _win_console_python()
+    project = str(_project_dir().resolve())
+    quoted = " ".join(_ps_quote(a) for a in action_args)
     if config.is_frozen():
-        args = list(action_args)
+        body = f"& {_ps_quote(program)} {quoted}\nexit $LASTEXITCODE\n"
     else:
-        args = [_win_short_path(_project_dir() / "main.py"), *action_args]
-    wd = _win_short_path(_project_dir())
-    ps_args = ", ".join(json.dumps(a) for a in args)
+        main_py = str(Path(project) / "main.py")
+        body = (
+            "Set-Location -LiteralPath " + _ps_quote(project) + "\n"
+            f"& {_ps_quote(program)} '-u' {_ps_quote(main_py)} {quoted}\n"
+            "exit $LASTEXITCODE\n"
+        )
+    elevate.write_text(body, encoding="utf-8-sig")
     ps = (
         "$ErrorActionPreference = 'Stop'\n"
         "try {\n"
-        f"  $p = Start-Process -FilePath {json.dumps(python)} "
-        f"-ArgumentList @({ps_args}) "
-        f"-WorkingDirectory {json.dumps(wd)} "
+        "  $ps = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n"
+        f"  $p = Start-Process -FilePath $ps -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',{json.dumps(str(elevate))}) "
         "-Verb RunAs -Wait -PassThru\n"
         "  if ($null -eq $p) { exit 1223 }\n"
         "  exit $p.ExitCode\n"
