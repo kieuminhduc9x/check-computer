@@ -5,6 +5,7 @@
 .last_screenshot.png
 .last_ready_notify
 .listener.pid
+.listener.user.pid
 .listener.takeover
 .last_code_update
 notes.txt

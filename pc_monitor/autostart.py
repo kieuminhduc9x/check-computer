@@ -21,6 +21,7 @@ from . import config
 
 ROLE_ENV = "PCMONITOR_ROLE"
 LISTENER_ROLE = "listener"
+BOOT_ROLE = "boot"
 
 MAC_LABELS = ("startup", "heartbeat", "listener")
 LINUX_UNITS = (
@@ -33,11 +34,13 @@ LINUX_UNITS = (
 WIN_TASK_STARTUP = "PC Monitor - Báo máy vừa bật"
 WIN_TASK_LISTENER = "PC Monitor - Lắng nghe Telegram"
 WIN_TASK_HEARTBEAT = "PC Monitor - Máy còn online"
-WIN_TASKS = (WIN_TASK_STARTUP, WIN_TASK_LISTENER, WIN_TASK_HEARTBEAT)
+WIN_TASK_BOOT = "PC Monitor - Chạy trước đăng nhập"
+WIN_TASKS = (WIN_TASK_STARTUP, WIN_TASK_LISTENER, WIN_TASK_HEARTBEAT, WIN_TASK_BOOT)
 WIN_TASK_DESC = {
     WIN_TASK_STARTUP: "Gửi tin báo máy vừa bật lên Telegram khi đăng nhập Windows",
-    WIN_TASK_LISTENER: "Lắng nghe lệnh Telegram: screenshot, VPN, tắt máy...",
+    WIN_TASK_LISTENER: "Lắng nghe lệnh Telegram trong phiên desktop: screenshot, VPN, app",
     WIN_TASK_HEARTBEAT: "Gửi tin máy còn online định kỳ",
+    WIN_TASK_BOOT: "Chạy lúc Windows bật, trước đăng nhập. Nhường khi có người đăng nhập",
 }
 WIN_FILE_STARTUP_CMD = "PC Monitor - Bao may vua bat.cmd"
 WIN_FILE_LISTENER_VBS = "PC Monitor - Lang nghe Telegram.vbs"
@@ -63,8 +66,56 @@ def running_as_listener() -> bool:
     return os.environ.get(ROLE_ENV) == LISTENER_ROLE
 
 
+def running_as_boot() -> bool:
+    if os.environ.get(ROLE_ENV) == BOOT_ROLE:
+        return True
+    return len(sys.argv) > 1 and sys.argv[1] == "listen-boot"
+
+
 def mark_listener_role() -> None:
     os.environ[ROLE_ENV] = LISTENER_ROLE
+
+
+def mark_boot_role() -> None:
+    os.environ[ROLE_ENV] = BOOT_ROLE
+
+
+def claim_user_listener() -> None:
+    """Listen trong phien desktop. Boot listen thay file nay thi tam dung poll."""
+    try:
+        config.USER_LISTENER_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def release_user_listener() -> None:
+    path = config.USER_LISTENER_PID_FILE
+    try:
+        if path.exists() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink()
+    except OSError:
+        pass
+
+
+def user_listener_alive() -> bool:
+    """Process listen desktop (khong phai listen-boot) con song."""
+    try:
+        pid = int(config.USER_LISTENER_PID_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    if pid == os.getpid():
+        return False
+    try:
+        import psutil
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        parts = [str(x).lower() for x in (proc.cmdline() or [])]
+        if "listen-boot" in parts:
+            return False
+        return "listen" in parts
+    except Exception:
+        return False
 
 
 def _python_bin() -> str:
@@ -396,6 +447,55 @@ def refresh_windows_startup() -> str:
     return f"Da cap nhat Startup an -> {dest}.{extra}"
 
 
+def _win_write_boot_cmd() -> Path:
+    """Task ONSTART /RU SYSTEM: listen truoc khi co nguoi dang nhap."""
+    dest = _win_autostart_dir() / "boot.cmd"
+    log_file = _project_dir() / "pc_monitor_task.log"
+    if config.is_frozen():
+        runner = f'"{Path(sys.executable).resolve()}" listen-boot >> "{log_file}" 2>&1'
+    else:
+        runner = (
+            f'"{_win_pythonw()}" -u "{_project_dir() / "main.py"}" listen-boot'
+            f' >> "{log_file}" 2>&1'
+        )
+    dest.write_text(
+        "@echo off\r\n"
+        f'cd /d "{_project_dir()}"\r\n'
+        "set PYTHONUNBUFFERED=1\r\n"
+        "set PCMONITOR_ROLE=boot\r\n"
+        ":again\r\n"
+        f"{runner}\r\n"
+        "timeout /t 20 /nobreak >nul\r\n"
+        "goto again\r\n",
+        encoding="utf-8-sig",
+    )
+    return dest
+
+
+def _install_windows_boot_task() -> tuple[bool, str]:
+    script = _win_write_boot_cmd()
+    attempts = [
+        ["/SC", "ONSTART", "/DELAY", "0000:30", "/RU", "SYSTEM", "/RL", "HIGHEST"],
+        ["/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST"],
+        ["/SC", "ONSTART", "/DELAY", "0000:30", "/RU", "SYSTEM"],
+        ["/SC", "ONSTART", "/RU", "SYSTEM"],
+    ]
+    last = ""
+    for extra in attempts:
+        result = _win_create_task(WIN_TASK_BOOT, script, extra)
+        if result.returncode == 0:
+            return True, (
+                f"- {WIN_TASK_BOOT}: OK\n"
+                "  Chay khi Windows bat, truoc man hinh dang nhap.\n"
+                "  Sau khi dang nhap thi nhuong cho listen desktop."
+            )
+        last = _win_err_text(result)
+    return False, (
+        f"- {WIN_TASK_BOOT}: chua tao duoc ({last or 'schtasks loi'}).\n"
+        "  Can bam Yes o hop thoai Administrator. Listen van chay sau khi dang nhap."
+    )
+
+
 def _win_write_cmd(name: str, action: str) -> Path:
     dest = _win_autostart_dir() / f"{name}.cmd"
     log_file = _project_dir() / "pc_monitor_task.log"
@@ -708,6 +808,8 @@ def _install_windows(*, start_listener_now: bool) -> tuple[bool, str]:
 
     _, startup_msg = _install_windows_startup_folder(cmds)
     lines.append(startup_msg)
+    _boot_ok, boot_msg = _install_windows_boot_task()
+    lines.append(boot_msg)
 
     if start_listener_now and not running_as_listener():
         started = _schtasks(["/Run", "/TN", WIN_TASK_LISTENER])
@@ -825,7 +927,8 @@ def takeover_requested() -> bool:
 
 
 def _is_listen_cmdline(parts: list[str], project: str) -> bool:
-    if "listen" not in [p.lower() for p in parts]:
+    low = [p.lower() for p in parts]
+    if "listen" not in low and "listen-boot" not in low:
         return False
     for p in parts:
         n = p.replace("\\", "/").lower()
@@ -931,10 +1034,24 @@ def _force_kill(pid: int) -> None:
         pass
 
 
+def _is_boot_pid(pid: int) -> bool:
+    try:
+        import psutil
+        parts = [str(x).lower() for x in (psutil.Process(pid).cmdline() or [])]
+        return "listen-boot" in parts
+    except Exception:
+        return False
+
+
 def takeover_existing_listener() -> str:
-    """Ghi de listen cu (service an / terminal cu). Khong can admin."""
+    """Ghi de listen cu (service an / terminal cu). Khong can admin.
+    Giu process listen-boot: no tu dung poll khi listen desktop song."""
     notes = _pause_managed_listener()
-    pids = [p for p in _other_listener_pids() if p not in _own_process_tree_pids()]
+    found = [p for p in _other_listener_pids() if p not in _own_process_tree_pids()]
+    kept = [p for p in found if _is_boot_pid(p)]
+    pids = [p for p in found if p not in kept]
+    if kept:
+        notes.append("Giu listen truoc dang nhap: " + ", ".join(f"PID {p}" for p in kept))
     if pids:
         try:
             config.TAKEOVER_FILE.write_text(str(time.time()), encoding="utf-8")
@@ -970,7 +1087,7 @@ def takeover_existing_listener() -> str:
                 _force_kill(pid)
         time.sleep(0.3)
         notes.append("Da tat listen cu: " + ", ".join(f"PID {p}" for p in pids))
-    else:
+    elif not kept:
         notes.append("Listen dang chay mot minh (binh thuong, khong can listen cu)")
     try:
         config.TAKEOVER_FILE.unlink(missing_ok=True)
@@ -985,6 +1102,8 @@ def takeover_existing_listener() -> str:
 
 def is_listener_running() -> tuple[bool, str]:
     """Process 'main.py listen' co dang chay khong (khac voi da dang ky autostart)."""
+    if running_as_boot():
+        return True, f"Listen truoc dang nhap (PID {os.getpid()})"
     if running_as_listener():
         return True, f"Dang chay trong process nay (PID {os.getpid()})"
     pids = _other_listener_pids()

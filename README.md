@@ -196,8 +196,10 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 .\setup_task_scheduler.ps1
 ```
 
-Tao 3 task: `PC Monitor - Báo máy vừa bật`, `PC Monitor - Máy còn online`,
-`PC Monitor - Lắng nghe Telegram`. Kiem tra trong **Task Scheduler**.
+Tao 4 task: `PC Monitor - Chạy trước đăng nhập` (luc Windows bat, truoc login),
+`PC Monitor - Báo máy vừa bật`, `PC Monitor - Máy còn online`,
+`PC Monitor - Lắng nghe Telegram` (sau khi dang nhap, co screenshot/app).
+Kiem tra trong **Task Scheduler**.
 
 **Go bo:** `python main.py uninstall` hoac `.\setup_task_scheduler.ps1 -Uninstall`
 

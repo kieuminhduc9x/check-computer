@@ -8,6 +8,7 @@ Cach dung:
     python main.py heartbeat    -> bao may VAN DANG BAT (dinh ky)
     python main.py test         -> gui tin nhan thu de kiem tra cau hinh
     python main.py listen       -> chay nen lien tuc, lang nghe lenh Telegram
+    python main.py listen-boot  -> listen truoc dang nhap (Task Scheduler goi, session he thong)
     python main.py hide         -> chay listen AN (pythonw), tra cua so ve ngay
     python main.py install      -> dang ky service (Windows tu hoi quyen Admin / UAC)
     python main.py uninstall    -> go bo service tu khoi dong
@@ -44,7 +45,7 @@ def run_one_shot(event: str) -> None:
 
 def main() -> None:
     valid = (
-        "startup", "shutdown", "heartbeat", "test", "listen", "hide",
+        "startup", "shutdown", "heartbeat", "test", "listen", "listen-boot", "hide",
         "install", "uninstall", "service", "reload",
     )
     if len(sys.argv) < 2 or sys.argv[1] not in valid:
@@ -52,7 +53,7 @@ def main() -> None:
         sys.exit(1)
 
     event = sys.argv[1]
-    if event == "listen":
+    if event in ("listen", "listen-boot"):
         listener.run()
     elif event == "hide":
         print("Bat listen an (pythonw). Co the dong Git Bash.", flush=True)

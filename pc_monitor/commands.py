@@ -345,6 +345,7 @@ def build_help_text() -> str:
         f"/autostart — dang ky chay khi khoi dong may{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/autostart_off — go bo service khoi dong{_disabled_suffix(config.ENABLE_AUTOSTART)}",
         f"/service — xem service khoi dong da cai chua{_disabled_suffix(config.ENABLE_AUTOSTART)}",
+        "Truoc dang nhap: task \"PC Monitor - Chạy trước đăng nhập\" tra loi /status, tat may, restart.",
         "/reload — khoi dong lai listen (nap code, khong git pull)",
         "/service reload — giong /reload",
         "",
@@ -988,6 +989,11 @@ def _cmd_vpn_off(chat_id: str, args: str) -> None:
 def handle_callback(chat_id: str, data: str) -> bool:
     """Xu ly nut bam inline. Tra ve True neu la callback cua bot."""
     try:
+        needs_desktop = data in ("confirm_close_apps", "vpn_on_all", "vpn_off_all") or data.startswith(
+            ("vpn_on:", "vpn_off:", "o:", "c:")
+        )
+        if needs_desktop and _boot_blocks_desktop(chat_id):
+            return True
         if data == "confirm_shutdown":
             _cmd_confirm_shutdown(chat_id, "")
             return True
@@ -1028,6 +1034,26 @@ def handle_callback(chat_id: str, data: str) -> bool:
 
 
 # ------------------------------- Bang dieu phoi -------------------------------
+
+_NEED_DESKTOP = {
+    "/screenshot", "/lock", "/open", "/run", "/close", "/close_apps",
+    "/confirm_close_apps", "/vpn", "/vpn_list", "/vpn_on", "/vpn_off",
+    "/apps", "/windows",
+}
+
+
+def _boot_blocks_desktop(chat_id: str) -> bool:
+    if not autostart.running_as_boot():
+        return False
+    telegram_api.reply(
+        chat_id,
+        "May chua dang nhap Windows.\n"
+        "Lenh nay can desktop: screenshot, app, VPN, khoa man hinh.\n"
+        "Dung duoc: /status /ping /cpu /ram /disk /ip /shutdown_now /restart_now.",
+        parse_mode="",
+    )
+    return True
+
 
 COMMAND_TABLE = {
     "/status": _cmd_status,
@@ -1083,6 +1109,9 @@ def dispatch(chat_id: str, text: str) -> bool:
     handler = COMMAND_TABLE.get(command)
     if handler is None:
         return False
+
+    if command in _NEED_DESKTOP and _boot_blocks_desktop(chat_id):
+        return True
 
     try:
         handler(chat_id, args)

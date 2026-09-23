@@ -3,6 +3,7 @@ listener.py - Vong lap chinh: lang nghe lenh Telegram (long polling) va
 dong thoi tu kiem tra CPU/RAM de canh bao neu vuot nguong.
 """
 
+import atexit
 import json
 import sys
 import time
@@ -328,6 +329,38 @@ def _auto_update_loop() -> None:
         time.sleep(interval)
 
 
+def _notify_boot_ready() -> None:
+    """May da len nguon, chua co desktop. Khong ghi stamp de tin dang nhap van gui duoc."""
+    text = (
+        "🟢 <b>MAY DA BAT — CHUA DANG NHAP</b>\n"
+        f"Ten may: {config.COMPUTER_NAME}\n"
+        "Listen dang tra loi truoc man hinh dang nhap.\n"
+        "Dung duoc: /status /ping /cpu /ram /disk /ip /shutdown_now /restart_now.\n"
+        "Screenshot, mo/tat app, VPN chay sau khi co nguoi dang nhap."
+    )
+    if telegram_api.send_to_all_retry(text, attempts=8, delay_sec=10):
+        telegram_api.log("Da bao Telegram: may bat, chua dang nhap.")
+    else:
+        telegram_api.log("Khong gui duoc thong bao truoc dang nhap.")
+
+
+def _boot_idle_until_desktop_stops() -> None:
+    """Mot BOT_TOKEN chi mot getUpdates. Boot dung poll khi listen desktop song."""
+    if not autostart.user_listener_alive():
+        time.sleep(5)
+        return
+    telegram_api.log("Listen desktop dang chay. Boot listen tam dung.")
+    while autostart.user_listener_alive():
+        time.sleep(3)
+    telegram_api.log("Listen desktop da dung. Boot listen chay lai.")
+    telegram_api.send_to_all(
+        "👤 <b>KHONG CON PHIEN DANG NHAP</b>\n"
+        "Listen truoc dang nhap chay lai.\n"
+        "/status /shutdown_now /restart_now dung duoc. Screenshot can dang nhap lai.",
+        parse_mode="HTML",
+    )
+
+
 def _notify_service_ready() -> None:
     """Bao Telegram khi listener start — retry neu may moi boot, mang chua len.
     Bo qua neu task startup vua gui tin trong 2 phut (tranh 2 tin trung)."""
@@ -376,22 +409,33 @@ def _notify_service_ready() -> None:
 
 def run() -> None:
     config.validate()
-    autostart.mark_listener_role()
-    telegram_api.log("Listener dang khoi dong...")
-    try:
-        takeover_note = autostart.takeover_existing_listener()
-        telegram_api.log(f"Ghi de listen cu: {takeover_note}")
-    except Exception as e:
-        telegram_api.log(f"Bo qua ghi de listen cu: {e}")
+    boot = autostart.running_as_boot()
+    if boot:
+        autostart.mark_boot_role()
+        telegram_api.log("Listener boot (truoc dang nhap) dang khoi dong...")
+    else:
+        autostart.mark_listener_role()
+        autostart.claim_user_listener()
+        atexit.register(autostart.release_user_listener)
+        telegram_api.log("Listener desktop dang khoi dong...")
+    if not boot:
+        try:
+            takeover_note = autostart.takeover_existing_listener()
+            telegram_api.log(f"Ghi de listen cu: {takeover_note}")
+        except Exception as e:
+            telegram_api.log(f"Bo qua ghi de listen cu: {e}")
+    else:
+        telegram_api.log("Boot listen khong tat listen desktop.")
     telegram_api.log(
         f"Listener bat dau chay. Chi tra loi chat_id trong: {config.ALLOWED_CHAT_IDS}"
     )
-    try:
-        refreshed = autostart.refresh_windows_startup()
-        if refreshed:
-            telegram_api.log(refreshed)
-    except Exception as e:
-        telegram_api.log(f"Khong cap nhat duoc Startup: {e}")
+    if not boot:
+        try:
+            refreshed = autostart.refresh_windows_startup()
+            if refreshed:
+                telegram_api.log(refreshed)
+        except Exception as e:
+            telegram_api.log(f"Khong cap nhat duoc Startup: {e}")
     telegram_api.clear_webhook()
     telegram_api.set_my_commands(commands.telegram_menu_commands())
     try:
@@ -399,8 +443,9 @@ def run() -> None:
     except Exception as e:
         telegram_api.log(f"Bo qua pending cu: {e}")
 
-    ready_thread = threading.Thread(target=_notify_service_ready, daemon=True)
-    ready_thread.start()
+    if not boot:
+        ready_thread = threading.Thread(target=_notify_service_ready, daemon=True)
+        ready_thread.start()
 
     # Bat tin hieu tat/khoi dong lai tren macOS & Linux (Windows dung
     # Event ID 1074 rieng, xem scripts/windows/). signal.SIGTERM khong ton
@@ -417,14 +462,23 @@ def run() -> None:
             f"Da bat canh bao: CPU>={config.ALERT_CPU_PERCENT}% RAM>={config.ALERT_RAM_PERCENT}%"
         )
 
-    threading.Thread(target=_auto_update_loop, daemon=True).start()
+    if not boot:
+        threading.Thread(target=_auto_update_loop, daemon=True).start()
     telegram_api.log("Lenh chay song song: moi event 1 thread, VPN/update/service chi xep hang trong group minh.")
 
     offset = _load_offset()
+    boot_announced = False
 
     while True:
+        if boot and autostart.user_listener_alive():
+            _boot_idle_until_desktop_stops()
+            continue
+        if boot and not boot_announced:
+            boot_announced = True
+            threading.Thread(target=_notify_boot_ready, daemon=True).start()
         try:
-            result = telegram_api.get_updates(offset, POLL_TIMEOUT_SEC)
+            poll_sec = 10 if boot else POLL_TIMEOUT_SEC
+            result = telegram_api.get_updates(offset, poll_sec)
         except requests.RequestException as e:
             telegram_api.log(f"Mat ket noi mang, thu lai sau {RETRY_SLEEP_SEC}s: {e}")
             time.sleep(RETRY_SLEEP_SEC)
@@ -437,6 +491,10 @@ def run() -> None:
         if not isinstance(result, dict) or not result.get("ok"):
             desc = str((result or {}).get("description") if isinstance(result, dict) else result)
             if "terminated by other getUpdates" in desc or "Conflict" in desc:
+                if boot:
+                    telegram_api.log("Boot listen nhuong getUpdates cho listen desktop.")
+                    _boot_idle_until_desktop_stops()
+                    continue
                 telegram_api.log(
                     "Telegram Conflict: con listen khac cung BOT_TOKEN "
                     "(service an / terminal khac / may khac). Dang ghi de tren may nay..."

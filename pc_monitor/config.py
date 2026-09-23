@@ -87,6 +87,7 @@ OFFSET_FILE = PROJECT_ROOT / ".update_offset"
 SCREENSHOT_TMP = PROJECT_ROOT / ".last_screenshot.png"
 READY_STAMP_FILE = PROJECT_ROOT / ".last_ready_notify"
 LISTENER_PID_FILE = PROJECT_ROOT / ".listener.pid"
+USER_LISTENER_PID_FILE = PROJECT_ROOT / ".listener.user.pid"
 TAKEOVER_FILE = PROJECT_ROOT / ".listener.takeover"
 UPDATE_STAMP_FILE = PROJECT_ROOT / ".last_code_update"
 ENABLE_AUTO_UPDATE = _get_bool("ENABLE_AUTO_UPDATE", True) and not is_frozen()
