@@ -287,6 +287,52 @@ def set_my_commands(commands: list) -> bool:
         return False
 
 
+def send_document(chat_id: str, file_path: Path, caption: str = "") -> tuple[bool, str]:
+    file_path = Path(file_path)
+    last_err = "khong gui duoc file"
+    for attempt in range(3):
+        try:
+            with open(file_path, "rb") as f:
+                resp = _send_http(
+                    "POST",
+                    _url("sendDocument"),
+                    timeout=60,
+                    data={"chat_id": chat_id, "caption": caption[:900]},
+                    files={"document": (file_path.name, f)},
+                )
+            try:
+                result = resp.json()
+            except Exception:
+                result = {}
+            if result.get("ok"):
+                return True, ""
+            last_err = result.get("description") or str(result)[:180]
+            log(f"sendDocument loi (lan {attempt + 1}): {result}")
+        except Exception as e:
+            last_err = str(e)
+            log(f"sendDocument that bai (lan {attempt + 1}): {e}")
+        time.sleep(0.8 * (attempt + 1))
+    return False, last_err
+
+
+def download_file(file_id: str) -> tuple[bool, bytes | str]:
+    try:
+        resp = _send_http("POST", _url("getFile"), timeout=20, data={"file_id": file_id})
+        result = resp.json()
+        if not result.get("ok"):
+            return False, str(result.get("description") or result)[:200]
+        remote = (result.get("result") or {}).get("file_path") or ""
+        if not remote:
+            return False, "Telegram khong tra file_path"
+        url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{remote}"
+        blob = _thread_session().get(url, timeout=60)
+        if blob.status_code != 200:
+            return False, f"Tai file HTTP {blob.status_code}"
+        return True, blob.content
+    except Exception as e:
+        return False, str(e)
+
+
 def send_photo(chat_id: str, image_path: Path, caption: str = "") -> tuple[bool, str]:
     """Gui anh. Tra ve (ok, thong_bao_loi). Mo lai file moi lan retry."""
     image_path = Path(image_path)

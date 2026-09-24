@@ -255,6 +255,47 @@ def _enqueue(
     threading.Thread(target=_watchdog, daemon=True, name=f"wd-{group}").start()
 
 
+def _touch_online() -> None:
+    try:
+        config.ONLINE_STAMP_FILE.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _announce_offline_gap() -> None:
+    try:
+        previous = float(config.ONLINE_STAMP_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        return
+    gap = time.time() - previous
+    if gap < config.OFFLINE_ALERT_MINUTES * 60:
+        return
+    minutes = int(gap // 60)
+    telegram_api.send_to_all(
+        f"🟡 <b>MAY VUA ONLINE LAI</b>\n"
+        f"{config.COMPUTER_NAME} im khoang {minutes} phut "
+        "(tat may, mat mang, hoac listen dung).\n"
+        "Bay gio /status tra loi duoc."
+    )
+
+
+def _unlock_watcher_loop() -> None:
+    if autostart.running_as_boot():
+        return
+    previous = None
+    while True:
+        time.sleep(15)
+        try:
+            locked = system_info.is_screen_locked()
+        except Exception:
+            continue
+        if previous is True and locked is False:
+            telegram_api.send_to_all(
+                f"🔓 <b>DA MO KHOA</b>\n{config.COMPUTER_NAME} vua mo khoa man hinh."
+            )
+        previous = locked
+
+
 def _alert_watcher_loop() -> None:
     """Chay trong thread rieng: kiem tra CPU/RAM dinh ky, canh bao neu vuot
     nguong lien tuc nhieu lan (tranh bao nham do tang dot ngot)."""
@@ -464,6 +505,12 @@ def run() -> None:
 
     if not boot:
         threading.Thread(target=_auto_update_loop, daemon=True).start()
+    try:
+        _announce_offline_gap()
+    except Exception as e:
+        telegram_api.log(f"Bo qua bao mat ket noi: {e}")
+    _touch_online()
+    threading.Thread(target=_unlock_watcher_loop, daemon=True).start()
     telegram_api.log("Lenh chay song song: moi event 1 thread, VPN/update/service chi xep hang trong group minh.")
 
     offset = _load_offset()
@@ -487,6 +534,9 @@ def run() -> None:
             telegram_api.log(f"Loi khong xac dinh, thu lai sau {RETRY_SLEEP_SEC}s: {e}")
             time.sleep(RETRY_SLEEP_SEC)
             continue
+
+        if isinstance(result, dict) and result.get("ok"):
+            _touch_online()
 
         if not isinstance(result, dict) or not result.get("ok"):
             desc = str((result or {}).get("description") if isinstance(result, dict) else result)
@@ -548,10 +598,27 @@ def run() -> None:
                 text = (message.get("text") or "").strip()
                 chat_id = str(chat.get("id", ""))
                 reply_to = int(message.get("message_id") or 0)
+                document = message.get("document") or {}
 
                 if chat_id not in config.ALLOWED_CHAT_IDS:
                     telegram_api.log(f"Bo qua tin nhan tu chat_id khong duoc phep: {chat_id}")
                     _save_offset(offset)
+                    continue
+
+                if document.get("file_id"):
+                    filename = str(document.get("file_name") or "file.bin")
+                    file_id = str(document["file_id"])
+                    caption = str(message.get("caption") or "")
+                    telegram_api.log(f"Nhan file {filename} tu {chat_id}")
+                    _pending_add(update_id, chat_id, "put")
+                    _save_offset(offset)
+                    _enqueue(
+                        "put",
+                        chat_id,
+                        lambda cid=chat_id, name=filename, fid=file_id, cap=caption: commands.save_incoming_file(cid, name, fid, cap),
+                        reply_to=reply_to,
+                        uid=update_id,
+                    )
                     continue
 
                 if not text:

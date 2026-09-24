@@ -80,6 +80,11 @@ ENABLE_AUTOSTART = _get_bool("ENABLE_AUTOSTART", True)
 ENABLE_CLOSE_APPS = _get_bool("ENABLE_CLOSE_APPS", True)
 ENABLE_OPEN_APPS = _get_bool("ENABLE_OPEN_APPS", True)
 ENABLE_VPN = _get_bool("ENABLE_VPN", True)
+ENABLE_FILES = _get_bool("ENABLE_FILES", True)
+ENABLE_CLIPBOARD = _get_bool("ENABLE_CLIPBOARD", True)
+ENABLE_VOLUME = _get_bool("ENABLE_VOLUME", True)
+ENABLE_REMOTE = _get_bool("ENABLE_REMOTE", True)
+ENABLE_WOL = _get_bool("ENABLE_WOL", True)
 
 NOTE_FILE = PROJECT_ROOT / os.getenv("NOTE_FILE", "notes.txt")
 LOG_FILE = PROJECT_ROOT / "pc_monitor.log"
@@ -90,6 +95,13 @@ LISTENER_PID_FILE = PROJECT_ROOT / ".listener.pid"
 USER_LISTENER_PID_FILE = PROJECT_ROOT / ".listener.user.pid"
 TAKEOVER_FILE = PROJECT_ROOT / ".listener.takeover"
 UPDATE_STAMP_FILE = PROJECT_ROOT / ".last_code_update"
+ONLINE_STAMP_FILE = PROJECT_ROOT / ".last_online"
+INBOX_DIR = PROJECT_ROOT / os.getenv("INBOX_DIR", "inbox")
+FILE_MAX_MB = max(1, _get_int("FILE_MAX_MB", 45))
+OFFLINE_ALERT_MINUTES = max(2, _get_int("OFFLINE_ALERT_MINUTES", 5))
+WOL_BROADCAST = os.getenv("WOL_BROADCAST", "255.255.255.255").strip() or "255.255.255.255"
+WOL_TARGETS = os.getenv("WOL_TARGETS", "").strip()
+REMOTE_COMMAND = os.getenv("REMOTE_COMMAND", "").strip()
 ENABLE_AUTO_UPDATE = _get_bool("ENABLE_AUTO_UPDATE", True) and not is_frozen()
 AUTO_UPDATE_MINUTES = max(0, _get_int("AUTO_UPDATE_MINUTES", 60))
 

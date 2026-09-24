@@ -9,6 +9,8 @@
 .listener.takeover
 .last_code_update
 notes.txt
+inbox/
+.last_online
 __pycache__/
 *.pyc
 .autostart/

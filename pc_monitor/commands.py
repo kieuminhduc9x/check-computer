@@ -20,6 +20,7 @@ from . import telegram_api
 from . import autostart
 from . import vpn
 from . import updater
+from . import extras
 
 # chat_id -> {"action": "shutdown"|"restart", "expires_at": float}
 _pending_confirmations = {}
@@ -35,6 +36,7 @@ GROUP_META = {
     "service": {"label": "Service", "timeout": 60, "maxsize": 4},
     "update": {"label": "Cap nhat", "timeout": 90, "maxsize": 2},
     "note": {"label": "Ghi chu", "timeout": 20, "maxsize": 8},
+    "files": {"label": "File", "timeout": 90, "maxsize": 4},
     "menu": {"label": "Menu", "timeout": 20, "maxsize": 8},
 }
 
@@ -79,6 +81,15 @@ _LOADING = {
     "confirm_shutdown": "dang gui lenh tat may",
     "confirm_restart": "dang gui lenh khoi dong lai",
     "cancel_power": "dang huy lenh",
+    "get": "dang gui file",
+    "clip": "dang doc clipboard",
+    "volume": "dang chinh am luong",
+    "battery": "dang doc pin",
+    "temp": "dang doc nhiet do",
+    "wol": "dang gui Wake-on-LAN",
+    "remote": "dang mo remote desktop",
+    "menu": "dang mo menu nut",
+    "screens": "dang liet ke man hinh",
 }
 
 
@@ -111,8 +122,10 @@ def command_group(kind: str) -> str:
     key = _norm_loading_key(kind)
     if key.startswith("vpn"):
         return "vpn"
-    if key.startswith("screenshot"):
+    if key.startswith(("screenshot", "screens")):
         return "screen"
+    if key.startswith(("get", "put", "clip")):
+        return "files"
     if key.startswith(("apps", "windows", "close", "lock", "confirm_close", "software", "installed", "programs", "open", "run")):
         return "apps"
     if key.startswith((
@@ -131,8 +144,10 @@ def command_group(kind: str) -> str:
         return "note"
     if key.startswith(("help", "start")):
         return "menu"
-    if key.startswith(("status", "ping", "cpu", "ram", "disk", "procs", "ip")):
+    if key.startswith(("status", "ping", "cpu", "ram", "disk", "procs", "ip", "battery", "temp", "volume", "wol")):
         return "info"
+    if key.startswith("remote"):
+        return "apps"
     return "menu"
 
 
@@ -315,14 +330,15 @@ def build_help_text() -> str:
         "/ip — IP noi bo va IP cong khai",
         "",
         "<b>[Chup man hinh]</b>",
-        f"/screenshot — chup man hinh{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
+        f"/screenshot — chup man chinh. /screenshot 2 hoac /screenshot all{_disabled_suffix(config.ENABLE_SCREENSHOT)}",
+        "/screens — liet ke man hinh",
         "",
         "<b>[Ung dung]</b>",
         "/apps — danh sach ung dung / cua so dang mo",
         "/windows — giong /apps",
         "/software — phan mem da cai tren may (loc: /software chrome)",
         "/installed — giong /software",
-        f"/open chrome — mo 1 app da cai{_disabled_suffix(config.ENABLE_OPEN_APPS)}",
+        f"/open chrome — mo app. /open https://... hoac /open Desktop/a.pdf{_disabled_suffix(config.ENABLE_OPEN_APPS)}",
         f"/lock — khoa man hinh{_disabled_suffix(config.ENABLE_LOCK)}",
         f"/close chrome — tat 1 app dang mo{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
         f"/close_apps — tat het ung dung dang mo, can xac nhan{_disabled_suffix(config.ENABLE_CLOSE_APPS)}",
@@ -352,7 +368,18 @@ def build_help_text() -> str:
         "<b>[Cap nhat]</b>",
         f"/update — git pull va restart listen{_disabled_suffix(config.ENABLE_AUTO_UPDATE)}",
         "",
+        "<b>[File / may]</b>",
+        f"/get Desktop/a.pdf — gui file len Telegram{_disabled_suffix(config.ENABLE_FILES)}",
+        "Gui file vao chat de luu vao thu muc inbox (caption la duong dan neu muon).",
+        f"/clip — xem clipboard. /clip noi dung — ghi clipboard{_disabled_suffix(config.ENABLE_CLIPBOARD)}",
+        f"/volume — xem %. /volume 40 — dat am luong{_disabled_suffix(config.ENABLE_VOLUME)}",
+        "/battery — pin",
+        "/temp — nhiet do",
+        f"/wol — danh thuc may khac trong LAN{_disabled_suffix(config.ENABLE_WOL)}",
+        f"/remote — mo RustDesk, AnyDesk hoac Remote Desktop{_disabled_suffix(config.ENABLE_REMOTE)}",
+        "",
         "<b>[Menu]</b>",
+        "/menu — nut bam: Trang thai, Chup, App, VPN, Tat may",
         "/help — xem lai danh sach nay",
         "",
         "Tin tracker: PC DA NHAN -> XONG / LOI / CHUA XONG. Biet lenh da toi may va khi nao ket thuc.",
@@ -403,6 +430,20 @@ def telegram_menu_commands() -> list:
     items.append(("reload", "[Service] Khoi dong lai listen"))
     if config.ENABLE_AUTO_UPDATE:
         items.append(("update", "[Cap nhat] Git pull va restart listen"))
+    items.append(("menu", "[Menu] Nut bam chinh"))
+    if config.ENABLE_FILES:
+        items.append(("get", "[File] Gui file len Telegram"))
+    if config.ENABLE_CLIPBOARD:
+        items.append(("clip", "[May] Xem hoac ghi clipboard"))
+    if config.ENABLE_VOLUME:
+        items.append(("volume", "[May] Am luong 0-100"))
+    items.append(("battery", "[May] Phan tram pin"))
+    items.append(("temp", "[May] Nhiet do"))
+    if config.ENABLE_WOL:
+        items.append(("wol", "[May] Danh thuc may khac trong LAN"))
+    if config.ENABLE_REMOTE:
+        items.append(("remote", "[May] Mo RustDesk / Remote Desktop"))
+    items.append(("screens", "[Chup] Liet ke man hinh"))
     items.append(("help", "[Menu] Danh sach toan bo lenh"))
     return [{"command": name, "description": desc} for name, desc in items]
 
@@ -417,9 +458,51 @@ def _cmd_status(chat_id: str, args: str) -> None:
         telegram_api.reply(chat_id, f"Loi /status: {e}", parse_mode="")
 
 
+def main_keyboard() -> dict:
+    return {
+        "keyboard": [
+            ["Trang thai", "Chup man hinh"],
+            ["App", "VPN"],
+            ["Tien ich", "Tat may"],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def utility_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "File inbox", "callback_data": "go:get"},
+                {"text": "Clipboard", "callback_data": "go:clip"},
+            ],
+            [
+                {"text": "Pin", "callback_data": "go:battery"},
+                {"text": "Am luong", "callback_data": "go:volume"},
+                {"text": "Nhiet do", "callback_data": "go:temp"},
+            ],
+            [
+                {"text": "Remote", "callback_data": "go:remote"},
+                {"text": "Wake LAN", "callback_data": "go:wol"},
+            ],
+        ]
+    }
+
+
+_BUTTON_COMMANDS = {
+    "trang thai": "/status",
+    "chup man hinh": "/screenshot",
+    "app": "/apps",
+    "vpn": "/vpn",
+    "tien ich": "/menu",
+    "tat may": "/shutdown_now",
+}
+
+
 def _cmd_help(chat_id: str, args: str) -> None:
     try:
-        telegram_api.send_message(chat_id, build_help_text())
+        telegram_api.send_message(chat_id, build_help_text(), reply_markup=main_keyboard())
     except Exception as e:
         telegram_api.reply(chat_id, f"Loi /help: {e}", parse_mode="")
 
@@ -499,9 +582,14 @@ def _cmd_open(chat_id: str, args: str) -> None:
     if not query:
         telegram_api.reply(
             chat_id,
-            "Gui /open tenapp. Vi du /open chrome\nHoac /software chrome roi bam Mo.",
+            "Gui /open tenapp, /open https://... hoac /open Desktop/file.pdf",
             parse_mode="",
         )
+        return
+    opened = extras.open_target(query)
+    if opened is not None:
+        ok, msg = opened
+        telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
         return
     status, item, hits = system_info.match_launchable(query)
     if status == "none":
@@ -544,10 +632,11 @@ def _cmd_screenshot(chat_id: str, args: str) -> None:
     telegram_api.send_chat_action(chat_id, "upload_photo")
     path = ""
     try:
-        ok, result = actions.take_screenshot()
+        ok, result = actions.take_screenshot(args)
         if ok:
             path = result
-            sent, err = telegram_api.send_photo(chat_id, result, caption="Man hinh hien tai")
+            caption = "Man hinh hien tai" if not args.strip() else f"Man hinh {args.strip()}"
+            sent, err = telegram_api.send_photo(chat_id, result, caption=caption)
             if not sent:
                 telegram_api.reply(
                     chat_id,
@@ -1014,6 +1103,10 @@ def handle_callback(chat_id: str, data: str) -> bool:
         if data == "confirm_close_apps":
             _cmd_confirm_close_apps(chat_id, "")
             return True
+        if data.startswith("go:"):
+            target = data.split(":", 1)[1]
+            dispatch(chat_id, "/" + target)
+            return True
         if data == "cancel_power":
             _pending_confirmations.pop(chat_id, None)
             telegram_api.reply(chat_id, "Da huy lenh.", parse_mode="")
@@ -1046,10 +1139,100 @@ def handle_callback(chat_id: str, data: str) -> bool:
 
 # ------------------------------- Bang dieu phoi -------------------------------
 
+def _cmd_screens(chat_id: str, args: str) -> None:
+    ok, msg = actions.list_monitors()
+    telegram_api.reply(chat_id, msg, parse_mode="")
+
+
+def _cmd_get(chat_id: str, args: str) -> None:
+    if not config.ENABLE_FILES:
+        telegram_api.reply(chat_id, "Tinh nang file dang tat (ENABLE_FILES=false).", parse_mode="")
+        return
+    ok, info = extras.prepare_get(args)
+    if not ok:
+        telegram_api.reply(chat_id, info, parse_mode="")
+        return
+    sent, err = telegram_api.send_document(chat_id, Path(info), caption=Path(info).name)
+    if not sent:
+        telegram_api.reply(chat_id, f"Khong gui duoc file. {err}", parse_mode="")
+
+
+def save_incoming_file(chat_id: str, filename: str, file_id: str, caption: str = "") -> None:
+    if not config.ENABLE_FILES:
+        telegram_api.reply(chat_id, "Tinh nang file dang tat.", parse_mode="")
+        return
+    ok, payload = telegram_api.download_file(file_id)
+    if not ok:
+        telegram_api.reply(chat_id, f"Khong tai duoc file tu Telegram. {payload}", parse_mode="")
+        return
+    stored, msg = extras.save_upload(filename, payload, caption)
+    telegram_api.reply(chat_id, ("OK. Da luu " if stored else "Loi. ") + msg, parse_mode="")
+
+
+def _cmd_clip(chat_id: str, args: str) -> None:
+    if not config.ENABLE_CLIPBOARD:
+        telegram_api.reply(chat_id, "Clipboard dang tat (ENABLE_CLIPBOARD=false).", parse_mode="")
+        return
+    if args.strip():
+        ok, msg = extras.clipboard_set(args)
+    else:
+        ok, msg = extras.clipboard_get()
+    telegram_api.reply(chat_id, msg if ok else "Loi. " + msg, parse_mode="")
+
+
+def _cmd_volume(chat_id: str, args: str) -> None:
+    if not config.ENABLE_VOLUME:
+        telegram_api.reply(chat_id, "Am luong dang tat (ENABLE_VOLUME=false).", parse_mode="")
+        return
+    level = None
+    if args.strip():
+        try:
+            level = int(args.strip())
+        except ValueError:
+            telegram_api.reply(chat_id, "Dung /volume hoac /volume 40", parse_mode="")
+            return
+    ok, msg = extras.volume(level)
+    telegram_api.reply(chat_id, msg if ok else "Loi. " + msg, parse_mode="")
+
+
+def _cmd_battery(chat_id: str, args: str) -> None:
+    telegram_api.reply(chat_id, "Pin: " + extras.battery_text(), parse_mode="")
+
+
+def _cmd_temp(chat_id: str, args: str) -> None:
+    telegram_api.reply(chat_id, extras.temperature_text(), parse_mode="")
+
+
+def _cmd_wol(chat_id: str, args: str) -> None:
+    if not config.ENABLE_WOL:
+        telegram_api.reply(chat_id, "Wake-on-LAN dang tat (ENABLE_WOL=false).", parse_mode="")
+        return
+    ok, msg = extras.resolve_wol(args)
+    telegram_api.reply(chat_id, msg if ok else msg, parse_mode="")
+
+
+def _cmd_remote(chat_id: str, args: str) -> None:
+    if not config.ENABLE_REMOTE:
+        telegram_api.reply(chat_id, "Remote dang tat (ENABLE_REMOTE=false).", parse_mode="")
+        return
+    ok, msg = extras.launch_remote()
+    telegram_api.reply(chat_id, ("OK. " if ok else "Loi. ") + msg, parse_mode="")
+
+
+def _cmd_menu(chat_id: str, args: str) -> None:
+    telegram_api.reply(
+        chat_id,
+        "Nut duoi chat: Trang thai, Chup, App, VPN, Tat may.\nTien ich:",
+        parse_mode="",
+        reply_markup=main_keyboard(),
+    )
+    telegram_api.reply(chat_id, "Chon tien ich:", parse_mode="", reply_markup=utility_keyboard())
+
+
 _NEED_DESKTOP = {
-    "/screenshot", "/lock", "/open", "/run", "/close", "/close_apps",
+    "/screenshot", "/screens", "/lock", "/open", "/run", "/close", "/close_apps",
     "/confirm_close_apps", "/vpn", "/vpn_list", "/vpn_on", "/vpn_off",
-    "/apps", "/windows",
+    "/apps", "/windows", "/clip", "/volume", "/remote",
 }
 
 
@@ -1093,6 +1276,15 @@ COMMAND_TABLE = {
     "/vpn_on": _cmd_vpn_on,
     "/vpn_off": _cmd_vpn_off,
     "/note": _cmd_note,
+    "/get": _cmd_get,
+    "/clip": _cmd_clip,
+    "/volume": _cmd_volume,
+    "/battery": _cmd_battery,
+    "/temp": _cmd_temp,
+    "/wol": _cmd_wol,
+    "/remote": _cmd_remote,
+    "/menu": _cmd_menu,
+    "/screens": _cmd_screens,
     "/autostart": _cmd_autostart,
     "/autostart_off": _cmd_autostart_off,
     "/service": _cmd_service,
@@ -1110,6 +1302,9 @@ COMMAND_TABLE = {
 def dispatch(chat_id: str, text: str) -> bool:
     """Tra ve True neu tim thay lenh tuong ung va da xu ly."""
     text = text.strip()
+    mapped = _BUTTON_COMMANDS.get(text.lower())
+    if mapped:
+        text = mapped
     if not text.startswith("/"):
         return False
 

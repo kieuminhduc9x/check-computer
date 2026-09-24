@@ -23,8 +23,21 @@ def _os() -> str:
 
 # --------------------------------- SCREENSHOT --------------------------------
 
-def take_screenshot() -> tuple:
-    """Chup man hinh ra file tam (moi lan 1 file). Tra ve (True, duong_dan) hoac (False, loi)."""
+def list_monitors() -> tuple[bool, str]:
+    try:
+        import mss
+        with mss.mss() as sct:
+            lines = []
+            for i, mon in enumerate(sct.monitors):
+                label = "tat ca man hinh" if i == 0 else f"man {i}"
+                lines.append(f"{i}: {label} {mon.get('width')}x{mon.get('height')}")
+            return True, "Man hinh:\n" + "\n".join(lines) + "\nDung: /screenshot 1 hoac /screenshot all"
+    except Exception as e:
+        return False, str(e)
+
+
+def take_screenshot(which: str = "") -> tuple:
+    """Chup man hinh ra file tam. which rong = man chinh, all = ghep, so = dung man do."""
     system = _os()
     fd, tmp = tempfile.mkstemp(prefix="pcmon-shot-", suffix=".png")
     os.close(fd)
@@ -42,7 +55,21 @@ def take_screenshot() -> tuple:
                         "Tren Linux can phien do hoa (X11/Wayland) dang dang nhap. "
                         "Tren macOS can cap Screen Recording cho Python/Terminal."
                     )
-                monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                pick = (which or "").strip().lower()
+                if pick in ("", "main", "1"):
+                    index = 1 if len(sct.monitors) > 1 else 0
+                elif pick in ("all", "0", "*"):
+                    index = 0
+                else:
+                    try:
+                        index = int(pick)
+                    except ValueError:
+                        path.unlink(missing_ok=True)
+                        return False, "Dung /screenshot, /screenshot 2 hoac /screenshot all"
+                    if index < 0 or index >= len(sct.monitors):
+                        path.unlink(missing_ok=True)
+                        return False, f"Khong co man {index}. Co {len(sct.monitors) - 1} man (1..{len(sct.monitors) - 1})."
+                monitor = sct.monitors[index]
                 shot = sct.grab(monitor)
                 mss.tools.to_png(shot.rgb, shot.size, output=str(path))
 
